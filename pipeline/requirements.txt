@@ -1,0 +1,10 @@
+pandas
+numpy
+rank-bm25
+sentence-transformers
+datasets
+accelerate>=1.1.0
+scikit-learn
+matplotlib
+nbformat
+jupyter

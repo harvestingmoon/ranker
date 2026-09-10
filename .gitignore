@@ -1,0 +1,14 @@
+# Model weights and caches are intentionally NOT committed.
+# Regenerate them with the commands in README.md.
+
+# fine-tuned cross-encoder weights (~87 MB each)
+pipeline/models/ce-*/
+pipeline/models/_ce_trainer_output/
+
+# cached embeddings + derived features
+pipeline/cache/
+
+# python / OS noise
+__pycache__/
+*.pyc
+.DS_Store

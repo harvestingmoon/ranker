@@ -1,0 +1,11 @@
+# Re-ranking modules (Stage 2) — extra deps on top of pipeline/requirements.txt
+# Install into the existing env (torch + CUDA already present there):
+#     conda activate fi-bench
+#     pip install -r pipeline/requirements-rerank.txt
+sentence-transformers>=3.0     # CrossEncoder (re-ranker) + SentenceTransformer (dense features)
+datasets>=2.20                 # required by the sentence-transformers Trainer API
+accelerate>=0.30               # ditto
+scikit-learn>=1.4              # GroupKFold (per-query CV)
+xgboost>=2.0                   # LambdaMART (rank:ndcg)
+rank-bm25>=0.2.2               # BM25 feature column
+# numpy/torch are already in fi-bench (torch 2.11.0+cu130, CUDA 13.0 runtime)
