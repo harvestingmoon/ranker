@@ -5,6 +5,10 @@
 pipeline/models/ce-*/
 pipeline/models/_ce_trainer_output/
 
+# fine-tuned embedding model (~1.3 GB) + trainer scratch
+pipeline/models/mxbai-*
+pipeline/models/_*-trainer*
+
 # cached embeddings + derived features
 pipeline/cache/
 
