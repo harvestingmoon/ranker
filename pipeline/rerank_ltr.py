@@ -200,6 +200,13 @@ def main():
         ltr_rank[q] = [pid for pid, _ in sorted(scored, key=lambda x: -x[1])]
     m_ltr = report("LambdaMART (" + ", ".join(f for f in features if f != "rrf_rank") + ")", ltr_rank, gt, rrf_full)
 
+    # Dump the OUT-OF-FOLD ranked lists so the reported row is traceable to an
+    # artifact, exactly like results/rrf_k60.json and results/ce_<tag>.json.
+    # This is the OOF ranking (not the full-data model's), so it stays honest.
+    oof_path = RESULTS_DIR / f"{args.tag}.json"
+    oof_path.write_text(json.dumps({str(q): [int(pid) for pid in rs] for q, rs in ltr_rank.items()}, indent=2))
+    print(f"wrote out-of-fold ranked lists to {oof_path}")
+
     # ---------------- final trained model on all queries ------------------
     all_rows = sorted([r for r in rows if r["label"] is not None], key=lambda r: r["hire_id"])
     X = np.array([[r[f] for f in features] for r in all_rows], dtype=np.float32)
