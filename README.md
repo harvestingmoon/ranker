@@ -24,8 +24,11 @@ gig query → [refined BM25 ‖ mxbai dense] → RRF → top-50 candidates
 | `pipeline/RERANK_README.md` | Runbook: exact commands, VRAM guidance, pitfalls |
 | `pipeline/evaluate.py` | P@K / R@K / NDCG@K / MRR (linear gain, relevance bar = score ≥ 40 ⇔ grade ≥ 2) |
 | `pipeline/retrieval_*.py` | Stage-1 retrievers (BM25, dense, RRF) |
-| `pipeline/data/` | Synthetic corpus + LLM-judged relevance labels |
+| `pipeline/data/` | Synthetic corpus + LLM-judged relevance labels (frozen baseline below) |
 | `pipeline/features/`, `pipeline/results/` | Built feature tables and frozen result lists (audit trail) |
+| `pipeline/data_sat/` | Real corpus from the Scrape-and-Tag pipeline (1,023 gigs × 2,165 providers) — see `pipeline/label.md` |
+| `pipeline/import_scrape_and_tag.py`, `pipeline/build_judging_pools_sat.py` | Build `data_sat/` from raw Scrape-and-Tag CSVs and generate its judging pools |
+| `pipeline/features_data_sat/`, `pipeline/models_data_sat/` | Built feature tables / trained model for the `data_sat` run (see "Real-data run" below) |
 
 ## Quickstart (CUDA)
 
@@ -74,6 +77,30 @@ Paired bootstrap over queries (10k resamples), full stack vs RRF baseline:
 Zero-shot MS MARCO rerankers are **out-of-domain** for consulting/finance text and lose to
 plain RRF; fine-tuning on in-domain judgments is what makes the cross-encoder useful, and it
 only pays once it is fed to LambdaMART as a feature rather than used as the final order.
+
+## Real-data run (`data_sat`)
+
+Everything above is measured on the **synthetic** corpus. The pipeline has also been retrained
+and reevaluated on real data from the Scrape-and-Tag pipeline (`pipeline/data_sat/`, 1,023 gigs
+× 2,165 providers — an order of magnitude larger and much noisier than the synthetic run).
+Every script above accepts `--data-dir data_sat` and writes to namespaced output dirs
+(`features_data_sat/`, `results_data_sat/`, `models_data_sat/`) so the synthetic numbers above
+stay frozen and reproducible.
+
+| Stage | NDCG@10 | P@5 | R@5 | R@10 | MRR |
+|---|---|---|---|---|---|
+| RRF k=60 (Stage 1 baseline) | 0.671 | 0.116 | 0.532 | 0.774 | 0.278 |
+| + cross-encoder, zero-shot | 0.365 | 0.064 | 0.291 | 0.407 | 0.183 |
+| + LambdaMART (no CE) | 0.659 | 0.152 | 0.677 | 0.861 | 0.340 |
+
+Real-data numbers are naturally much lower than synthetic (47% of gigs have no strong provider
+match anywhere in the catalog — a catalog-coverage gap, not a ranker failure; see the worked
+query examples below). Cross-encoder fine-tuning was attempted but stopped before completion
+(zero-shot regressed hard, and CPU-only fine-tuning was multi-hour) — an open item, not closed.
+
+**Full write-up** — dataset stats, the fields/feature fixes made to support real data, feature
+importances, four worked (query → ranking) examples explaining the numbers, and caveats — is in
+`pipeline/RERANK_README.md`, section "Real-data run — `data_sat`".
 
 ## Dense embedding fine-tune (Matryoshka-aware)
 
