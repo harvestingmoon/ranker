@@ -18,12 +18,14 @@ Writes to pipeline/data_sat/:
     judging_pools.json   {hire_id: [provider_id, ...]}
     pool_sources.json    {hire_id: {provider_id: ["rrf", "bm25", ...]}}  -- audit trail
 
-Embeddings are cached under pipeline/cache/ (git-ignored), so a rerun with other
-pool sizes doesn't re-embed.
+Embeddings are cached under pipeline/cache/ (git-ignored), keyed by a hash of each
+text, so a rerun with other pool sizes doesn't re-embed, and a re-import only embeds
+the texts that changed (never reuses a vector for different text).
 
 Run: python pipeline/build_judging_pools_sat.py [--rrf-top 20 --method-top 10 --random 5]
 """
 import argparse
+import hashlib
 import json
 import random
 from pathlib import Path
@@ -40,14 +42,21 @@ DATA_DIR = BASE / "data_sat"
 CACHE_DIR = BASE / "cache"
 
 
-def cached(name: str, build):
-    path = CACHE_DIR / name
-    if path.exists():
-        return np.load(path)
-    arr = build()
-    CACHE_DIR.mkdir(exist_ok=True)
-    np.save(path, arr)
-    return arr
+def embed_cached(name: str, texts: list[str], encode) -> np.ndarray:
+    """Embeddings for `texts`, reusing any text already embedded under `name`."""
+    vec_path, key_path = CACHE_DIR / f"{name}.npy", CACHE_DIR / f"{name}.keys.json"
+    known = {}
+    if vec_path.exists() and key_path.exists():
+        known = dict(zip(json.loads(key_path.read_text()), np.load(vec_path)))
+    keys = [hashlib.sha1(t.encode("utf-8")).hexdigest() for t in texts]
+    todo = {k: t for k, t in zip(keys, texts) if k not in known}
+    print(f"  {name}: {len(texts) - len(todo)} cached, {len(todo)} to embed", flush=True)
+    if todo:
+        known.update(zip(todo, encode(list(todo.values()))))
+        CACHE_DIR.mkdir(exist_ok=True)
+        np.save(vec_path, np.stack(list(known.values())))
+        key_path.write_text(json.dumps(list(known)))
+    return np.stack([known[k] for k in keys])
 
 
 def main():
@@ -56,17 +65,22 @@ def main():
     ap.add_argument("--method-top", type=int, default=10)
     ap.add_argument("--random", type=int, default=5)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--data-dir", type=Path, default=DATA_DIR)
+    ap.add_argument("--embed-only", action="store_true", help="fill the embedding cache and exit")
     args = ap.parse_args()
+    data_dir = args.data_dir
 
-    hirers = json.loads((DATA_DIR / "hirers.json").read_text(encoding="utf-8"))
-    providers = json.loads((DATA_DIR / "providers.json").read_text(encoding="utf-8"))
+    hirers = json.loads((data_dir / "hirers.json").read_text(encoding="utf-8"))
+    providers = json.loads((data_dir / "providers.json").read_text(encoding="utf-8"))
     pids = [p["provider_id"] for p in providers]
     print(f"{len(hirers)} gigs x {len(providers)} providers")
 
     bm25 = BM25Retriever(providers, refined=True)
     print(f"embedding with {BASE_MODEL_NAME} (CPU is slow the first time; cached after)...", flush=True)
-    doc_raw = cached("sat_docs_mxbai.npy", lambda: encode_docs([provider_text(p) for p in providers]))
-    q_raw = cached("sat_queries_mxbai.npy", lambda: encode_queries([hirer_text(h) for h in hirers]))
+    doc_raw = embed_cached("sat_docs_mxbai_by_text", [provider_text(p) for p in providers], encode_docs)
+    q_raw = embed_cached("sat_queries_mxbai_by_text", [hirer_text(h) for h in hirers], encode_queries)
+    if args.embed_only:
+        return
 
     rng = random.Random(args.seed)
     pools, sources = {}, {}
@@ -86,13 +100,13 @@ def main():
         pools[hid] = sorted(src)
         sources[hid] = {str(p): s for p, s in sorted(src.items())}
 
-    (DATA_DIR / "judging_pools.json").write_text(json.dumps(pools, indent=1), encoding="utf-8")
-    (DATA_DIR / "pool_sources.json").write_text(json.dumps(sources, indent=1), encoding="utf-8")
+    (data_dir / "judging_pools.json").write_text(json.dumps(pools, indent=1), encoding="utf-8")
+    (data_dir / "pool_sources.json").write_text(json.dumps(sources, indent=1), encoding="utf-8")
 
     sizes = [len(v) for v in pools.values()]
     print(f"pool size per gig: min {min(sizes)}, mean {np.mean(sizes):.1f}, max {max(sizes)}")
     print(f"total pairs to judge: {sum(sizes)}")
-    print(f"written to {DATA_DIR}")
+    print(f"written to {data_dir}")
 
 
 if __name__ == "__main__":
