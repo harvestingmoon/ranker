@@ -7,7 +7,7 @@ top-K, the feature row a learned ranker needs -- text-retrieval signals
 embeddings structurally cannot see (budget fit, seniority fit, availability
 immediacy). Writes plain CSVs so the ranker modules never need to re-embed.
 
-Outputs
+Outputs (namespaced by --data-dir; shown here for the default "data")
 -------
 features/candidates_top{K}.csv : every top-K candidate for every hirer
 features/train_pairs.csv       : the judged subset (label source for training)
@@ -23,16 +23,20 @@ that a GBDT will happily memorise. Pass `--label-policy all` to opt into that
 
 Train/serve skew warning
 ------------------------
-budget_fit / seniority_fit come from `_hirers_with_taxonomy.json` /
-`_providers_with_taxonomy.json`, which carry internal synthetic fields
-(budget_lo, budget_hi, seniority_needed, seniority). Before shipping any
-ranker trained on them, confirm the production gig payload actually carries
-those fields -- otherwise the model learns on features that are absent (or
-constant) at serve time.
+budget_fit / seniority_fit / avail_immediacy need budget_lo, budget_hi,
+seniority_needed, seniority, rate_per_hour, availability (and, for data_sat,
+available_from / start_by). The synthetic corpus (--data-dir data) carries
+these in a separate `_hirers_with_taxonomy.json` / `_providers_with_taxonomy.json`;
+data_sat carries them inline on providers.json/hirers.json, and this script
+falls back to those directly when no `_with_taxonomy.json` file exists.
+Before shipping any ranker trained on them, confirm the production gig
+payload actually carries these fields -- otherwise the model learns on
+features that are absent (or constant) at serve time.
 
 Run (from the repo root, in the fi-bench env):
     conda activate fi-bench
     python pipeline/features.py --top-k 50
+    python pipeline/features.py --top-k 50 --data-dir data_sat
 """
 import argparse
 import csv
@@ -105,6 +109,19 @@ def seniority_fit(needed: str, has: str) -> float:
     return 1.0 - abs(a - b) / 2.0
 
 
+def _parse_avail_date(value: str | None, today: date) -> date | None:
+    """data_sat uses the literal sentinels "now" (provider.available_from)
+    and "asap" (hirer.start_by) instead of a date in ~45% / ~7% of records
+    respectively -- both anchor to today's date. Anything else is ISO
+    'YYYY-MM-DD' or unparseable (-> None, caller falls back to text)."""
+    if value in ("now", "asap"):
+        return today
+    try:
+        return date.fromisoformat(value) if value else None
+    except ValueError:
+        return None
+
+
 def avail_immediacy(provider: dict, hirer: dict) -> float:
     """data_sat carries clean dates (`available_from` on the provider,
     `start_by` on the hirer) -- prefer those over the synthetic corpus's
@@ -112,13 +129,12 @@ def avail_immediacy(provider: dict, hirer: dict) -> float:
     "3 days/week") never appear in data_sat's "Available from <date>, N
     days a week" strings and would otherwise silently collapse to the 0.5
     default for every real record."""
-    avail_from, start_by = provider.get("available_from"), hirer.get("start_by")
-    if avail_from and start_by:
-        try:
-            gap_days = (date.fromisoformat(avail_from) - date.fromisoformat(start_by)).days
-            return 1.0 if gap_days <= 0 else max(0.0, 1.0 - gap_days / AVAIL_DECAY_DAYS)
-        except ValueError:
-            pass
+    today = date.today()
+    d_avail = _parse_avail_date(provider.get("available_from"), today)
+    d_start = _parse_avail_date(hirer.get("start_by"), today)
+    if d_avail is not None and d_start is not None:
+        gap_days = (d_avail - d_start).days
+        return 1.0 if gap_days <= 0 else max(0.0, 1.0 - gap_days / AVAIL_DECAY_DAYS)
     t = (provider.get("availability") or "").lower()
     for needle, score in AVAIL_SOON:
         if needle in t:

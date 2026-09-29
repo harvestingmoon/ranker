@@ -136,19 +136,33 @@ namespaces its outputs (`features_data_sat/`, `results_data_sat/`, `models_data_
 
 **Scale.** 1,023 hirers × 2,165 providers (vs. 130 × 104 synthetic), 23,873 LLM-graded pairs
 total (grader `qwen3.8:27b`, see `label.md`), 19,193 of those inside the top-50 RRF pool used
-for training. Grades cluster low: 40.9% grade-0, 46.0% grade-1, 9.7% grade-2, 3.4% grade-3 — and
-34% of gigs have **no** provider graded ≥2 at all, so a hard ceiling on P@K/NDCG@K is expected
-and is a property of the corpus, not the ranker.
+for training. Grades cluster low: 40.9% grade-0, 46.0% grade-1, 9.7% grade-2, 3.4% grade-3.
+Measured directly against this run's `ground_truth_llm.json` (not `label.md`'s figure, which
+describes the earlier, superseded 774-gig `data_sat` before the data team backfilled
+budget/seniority/availability): **481/1,023 hirers (47.0%) have no provider graded ≥2 at all**
+(RELEVANCE_THRESHOLD=40 in `evaluate.py`). `evaluate_all_hirers` excludes these from the recall
+average (recall is undefined with zero relevant items) but scores them as a hard 0 in NDCG/MRR —
+so R@5/R@10 above are averaged over the ~542 hirers with a real match, while NDCG@10/MRR are not.
+A hard ceiling on P@K/NDCG@K/R@K is expected and is a property of the corpus, not the ranker.
 
 **Fields resolved.** `budget_lo/hi`, `seniority_needed` (hirers) and `rate_per_hour`, `seniority`,
 `available_from`, `availability` (providers) are now present inline on every record — the earlier
 version of `data_sat` was missing these (see `label.md`), which had paused this retrain. Since
 `data_sat` carries them directly (no separate `_with_taxonomy.json`), `features.py` now falls
-back to the main `providers.json`/`hirers.json` when that file is absent. `avail_immediacy()` was
-also changed to use the structured `available_from` vs. hirer `start_by` date gap when present,
-instead of matching synthetic-only phrases like "immediately" against `data_sat`'s
-"Available from `<date>`, N days a week" strings, which would otherwise never match and silently
-collapse to a constant 0.5 for every real record.
+back to the main `providers.json`/`hirers.json` when that file is absent.
+
+`avail_immediacy()` was changed to use the structured `available_from` (provider) vs. `start_by`
+(hirer) date gap when present, instead of matching synthetic-only phrases like "immediately"
+against `data_sat`'s "Available from `<date>`, N days a week" strings, which never match and
+would otherwise silently collapse to a constant 0.5 for every real record. That first version of
+the fix still had a bug caught during a review pass before push: `available_from` and `start_by`
+aren't always ISO dates — 966/2,165 providers use the literal sentinel `"now"` and 75/1,023
+hirers use `"asap"` — and unhandled `date.fromisoformat()` on those raised `ValueError`, which
+fell through to the same free-text matcher (which also doesn't recognise "Available now, ..."),
+landing back on the 0.5 default for **47.5% of all candidate rows**. Both sentinels now resolve
+to `date.today()` before comparison; the fallback-default rate dropped to 0.43% of rows (genuine
+missing/unparseable dates only), and `avail_immediacy`'s LambdaMART feature importance moved from
+0.054 (barely above noise) to 0.085 (5th of 9 features) once it carried real signal.
 
 **Results:**
 
@@ -156,7 +170,7 @@ collapse to a constant 0.5 for every real record.
 |---|---|---|---|---|---|
 | RRF k=60 (Stage 1 baseline) | 0.6710 | 0.116 | 0.532 | 0.774 | 0.278 |
 | + cross-encoder, zero-shot (`ms-marco-MiniLM-L6-v2`) | 0.3649 | 0.064 | 0.291 | 0.407 | 0.183 |
-| + LambdaMART (RRF/BM25/dense + budget/seniority/avail, no CE) | 0.6662 | 0.148 | 0.656 | 0.862 | 0.326 |
+| + LambdaMART (RRF/BM25/dense + budget/seniority/avail, no CE) | 0.6591 | 0.152 | 0.677 | 0.861 | 0.340 |
 
 - **Zero-shot cross-encoder regresses hard** on real data (NDCG@10 0.671 → 0.365) — confirmed
   out-of-domain for consulting/finance text, much more visibly than on the synthetic corpus.
@@ -164,17 +178,17 @@ collapse to a constant 0.5 for every real record.
   **not** carried into LambdaMART as a feature. Fine-tuning under per-query 5-fold CV was started
   but deliberately **skipped/stopped** for this run (project-owner call, given the zero-shot
   regression and the multi-hour CPU cost) — this stays a documented open item, not a closed one.
-- **LambdaMART on structured + retrieval features alone**: NDCG@10 is flat vs. RRF (0.666 vs
+- **LambdaMART on structured + retrieval features alone**: NDCG@10 is flat vs. RRF (0.659 vs
   0.671 — inside the project's own ~0.02 noise threshold), but P@5/R@5/R@10/MRR all improve
   meaningfully. Read this as: the learned ranker isn't pulling more relevant items into the very
   top of a tied NDCG score, it's doing a better job spreading relevant items across the top-10 and
   reducing misses lower in the list — consistent with 1,023 queries giving GroupKFold much more
   signal than the synthetic run's 130.
-- **Feature importance** (mean over 5 folds): `rrf_rank` 0.241, `rrf_score` 0.162, `dense_rank`
-  0.160, `seniority_fit` 0.115, `budget_fit` 0.084, `dense_cosine` 0.073, `bm25_score` 0.057,
-  `bm25_rank` 0.055, `avail_immediacy` 0.054. The two structured fields the earlier `data_sat`
-  couldn't compute (`seniority_fit`, `budget_fit`) rank 4th and 5th — real, non-trivial weight,
-  which is the main payoff of getting those fields backfilled.
+- **Feature importance** (mean over 5 folds): `rrf_rank` 0.223, `rrf_score` 0.164, `dense_rank`
+  0.154, `seniority_fit` 0.116, `avail_immediacy` 0.085, `budget_fit` 0.085, `dense_cosine` 0.070,
+  `bm25_score` 0.056, `bm25_rank` 0.048. The three structured fields the earlier `data_sat`
+  couldn't compute (`seniority_fit`, `budget_fit`, `avail_immediacy`) rank 4th, 5th and 6th —
+  real, non-trivial weight, which is the main payoff of getting those fields backfilled.
 
 **Caveats specific to this run** (in addition to the general ones in `label.md`):
 - Only one seed / one fold split was run — no bootstrap CI yet on the LambdaMART deltas, so per
@@ -182,4 +196,15 @@ collapse to a constant 0.5 for every real record.
 - Cross-encoder fine-tuning remains untried on this corpus. Given 19,193 judged pairs (vs. a few
   hundred on synthetic), it has a much better chance of working than the synthetic run's fine-tune
   did — worth revisiting with GPU access rather than CPU-only.
+- **Pre-existing bug, not introduced by this run**: `retrieval_bm25.py`'s query-side field
+  weighting effectively 4×-weights the title instead of the documented 3× (`title_weight=3`).
+  `BM25Retriever._query_tokens` rebuilds query tokens via `hirer_bm25_tokens(h_like, ...)`, where
+  `h_like["hire_description"]` is set to the *already-concatenated* `hirer_text(h)` (which itself
+  includes the title) rather than the raw `hire_description` field — so the title's tokens are
+  counted once via `title_tokens * title_weight` and once more inside `body_tokens`. This affects
+  every BM25/RRF run in this repo, synthetic and `data_sat` alike (it predates this session), so
+  it does not change the *relative* comparisons above, but it means "refined BM25" is stronger
+  than its own documentation claims. Flagged here, not fixed here — fixing it would change the
+  frozen synthetic baseline numbers this README already documents elsewhere, which needs its own
+  decision, not a silent edit inside a data_sat retrain.
 - `--export-scores` (calibrated 0–100 contract output) was not run for this dataset yet.
