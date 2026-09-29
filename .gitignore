@@ -16,3 +16,8 @@ pipeline/cache/
 __pycache__/
 *.pyc
 .DS_Store
+
+# data_sat run: large regenerable Stage-1 sweep dumps + embedding cache
+# (regenerate with: python pipeline/run_pipeline.py --data-dir data_sat)
+pipeline/results_data_sat/
+pipeline/cache_data_sat/

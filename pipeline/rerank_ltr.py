@@ -42,6 +42,20 @@ FEAT_DIR = BASE / "features"
 RESULTS_DIR = BASE / "results"
 MODELS_DIR = BASE / "models"
 
+
+def set_dataset(tag: str):
+    """Namespace every path by dataset so data_sat runs never touch the
+    frozen synthetic-data baseline (features/, results/, models/)."""
+    global DATA_DIR, FEAT_DIR, RESULTS_DIR, MODELS_DIR
+    DATA_DIR = BASE / tag
+    if tag == "data":
+        FEAT_DIR, RESULTS_DIR, MODELS_DIR = BASE / "features", BASE / "results", BASE / "models"
+    else:
+        FEAT_DIR = BASE / f"features_{tag}"
+        RESULTS_DIR = BASE / f"results_{tag}"
+        MODELS_DIR = BASE / f"models_{tag}"
+
+
 ID_COLS = {"hire_id", "provider_id", "label", "judged"}
 DEFAULT_FEATURES = ["bm25_score", "bm25_rank", "dense_cosine", "dense_rank",
                     "rrf_score", "rrf_rank", "budget_fit", "seniority_fit", "avail_immediacy"]
@@ -168,7 +182,10 @@ def main():
     ap.add_argument("--export-scores", action="store_true",
                     help="write results/ltr_<tag>.json ranked lists + 0-100 calibrated scores")
     ap.add_argument("--tag", default="ltr")
+    ap.add_argument("--data-dir", default="data",
+                    help="dataset folder under pipeline/ (e.g. data_sat); outputs are namespaced accordingly")
     args = ap.parse_args()
+    set_dataset(args.data_dir)
 
     MODELS_DIR.mkdir(exist_ok=True)
     rrf_full = load_json(RESULTS_DIR / "rrf_k60.json")

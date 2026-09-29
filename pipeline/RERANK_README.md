@@ -125,3 +125,61 @@ If scores come back NaN, drop `--fp16` first — same failure class as the MPS N
 | `results/ltr_scores.json` | calibrated 0–100 semantic scores (with `--export-scores`) |
 | `models/ltr_xgb.json`, `models/ce-<tag>/` | trained models |
 | `cache/*.npy` | cached embeddings |
+
+---
+
+## Real-data run — `data_sat` (2026-09-29)
+
+Every command above also accepts `--data-dir data_sat` (added when this run was done) and
+namespaces its outputs (`features_data_sat/`, `results_data_sat/`, `models_data_sat/`,
+`cache_data_sat/`) so this run never touches the frozen synthetic baseline above.
+
+**Scale.** 1,023 hirers × 2,165 providers (vs. 130 × 104 synthetic), 23,873 LLM-graded pairs
+total (grader `qwen3.8:27b`, see `label.md`), 19,193 of those inside the top-50 RRF pool used
+for training. Grades cluster low: 40.9% grade-0, 46.0% grade-1, 9.7% grade-2, 3.4% grade-3 — and
+34% of gigs have **no** provider graded ≥2 at all, so a hard ceiling on P@K/NDCG@K is expected
+and is a property of the corpus, not the ranker.
+
+**Fields resolved.** `budget_lo/hi`, `seniority_needed` (hirers) and `rate_per_hour`, `seniority`,
+`available_from`, `availability` (providers) are now present inline on every record — the earlier
+version of `data_sat` was missing these (see `label.md`), which had paused this retrain. Since
+`data_sat` carries them directly (no separate `_with_taxonomy.json`), `features.py` now falls
+back to the main `providers.json`/`hirers.json` when that file is absent. `avail_immediacy()` was
+also changed to use the structured `available_from` vs. hirer `start_by` date gap when present,
+instead of matching synthetic-only phrases like "immediately" against `data_sat`'s
+"Available from `<date>`, N days a week" strings, which would otherwise never match and silently
+collapse to a constant 0.5 for every real record.
+
+**Results:**
+
+| Stage | NDCG@10 | P@5 | R@5 | R@10 | MRR |
+|---|---|---|---|---|---|
+| RRF k=60 (Stage 1 baseline) | 0.6710 | 0.116 | 0.532 | 0.774 | 0.278 |
+| + cross-encoder, zero-shot (`ms-marco-MiniLM-L6-v2`) | 0.3649 | 0.064 | 0.291 | 0.407 | 0.183 |
+| + LambdaMART (RRF/BM25/dense + budget/seniority/avail, no CE) | 0.6662 | 0.148 | 0.656 | 0.862 | 0.326 |
+
+- **Zero-shot cross-encoder regresses hard** on real data (NDCG@10 0.671 → 0.365) — confirmed
+  out-of-domain for consulting/finance text, much more visibly than on the synthetic corpus.
+  Per the project's own "zero-shot first, fine-tune only if the gain is real" rule, its score was
+  **not** carried into LambdaMART as a feature. Fine-tuning under per-query 5-fold CV was started
+  but deliberately **skipped/stopped** for this run (project-owner call, given the zero-shot
+  regression and the multi-hour CPU cost) — this stays a documented open item, not a closed one.
+- **LambdaMART on structured + retrieval features alone**: NDCG@10 is flat vs. RRF (0.666 vs
+  0.671 — inside the project's own ~0.02 noise threshold), but P@5/R@5/R@10/MRR all improve
+  meaningfully. Read this as: the learned ranker isn't pulling more relevant items into the very
+  top of a tied NDCG score, it's doing a better job spreading relevant items across the top-10 and
+  reducing misses lower in the list — consistent with 1,023 queries giving GroupKFold much more
+  signal than the synthetic run's 130.
+- **Feature importance** (mean over 5 folds): `rrf_rank` 0.241, `rrf_score` 0.162, `dense_rank`
+  0.160, `seniority_fit` 0.115, `budget_fit` 0.084, `dense_cosine` 0.073, `bm25_score` 0.057,
+  `bm25_rank` 0.055, `avail_immediacy` 0.054. The two structured fields the earlier `data_sat`
+  couldn't compute (`seniority_fit`, `budget_fit`) rank 4th and 5th — real, non-trivial weight,
+  which is the main payoff of getting those fields backfilled.
+
+**Caveats specific to this run** (in addition to the general ones in `label.md`):
+- Only one seed / one fold split was run — no bootstrap CI yet on the LambdaMART deltas, so per
+  guardrail #4 above, treat the P@5/R@5/MRR gains as promising, not proven.
+- Cross-encoder fine-tuning remains untried on this corpus. Given 19,193 judged pairs (vs. a few
+  hundred on synthetic), it has a much better chance of working than the synthetic run's fine-tune
+  did — worth revisiting with GPU access rather than CPU-only.
+- `--export-scores` (calibrated 0–100 contract output) was not run for this dataset yet.
