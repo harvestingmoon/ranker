@@ -9,7 +9,16 @@ query → [refined BM25 ‖ mxbai dense] → RRF → top-50
       → calibrate → 0–100 JSON           (contract handoff)
 ```
 
-Frozen baseline to beat: **RRF k=60, NDCG@10 = 0.8918, P@5 = 0.495, MRR = 0.956**.
+Primary dataset: **`pipeline/data_sat`** — real gig/provider data from the Scrape-and-Tag
+pipeline (1,023 hirers × 2,165 providers, 23,873 LLM-graded pairs; see `label.md`). Every
+command below defaults to it via `--data-dir data_sat` and namespaces its outputs
+(`features_data_sat/`, `results_data_sat/`, `models_data_sat/`, `cache_data_sat/`). An earlier,
+smaller synthetic corpus is archived in `pipeline/data/` (omit `--data-dir`, or pass
+`--data-dir data`) — its results are not covered here; see git history.
+
+Current result to beat: **RRF k=60, NDCG@10 = 0.671, P@5 = 0.116, MRR = 0.278** (see "Results"
+below for why these look low, and the worked examples for what's actually happening query by
+query).
 
 ---
 
@@ -21,69 +30,81 @@ pip install -r pipeline/requirements-rerank.txt
 python -c "import torch, xgboost, sentence_transformers; print(torch.cuda.is_available())"
 ```
 
-`fi-bench` already has torch 2.11.0+cu130 and sees the RTX 3060 Laptop GPU (6.4 GB).
+`fi-bench` already has torch 2.11.0+cu130 and sees the RTX 3060 Laptop GPU (6.4 GB) where
+available; this repo's `data_sat` run so far has been CPU/MPS-only (no CUDA host), which is why
+cross-encoder fine-tuning (§5) hasn't been completed yet — it's slow without a GPU.
 If `import sentence_transformers` fails after install, it's a transformers-version clash —
 `sentence-transformers` may pin `transformers<5`; check with `pip check` before assuming the env is fine.
 
-## 2. Build the feature table (once)
+## 2. Stage 1 (BM25 / dense / RRF)
 
 ```bash
-python pipeline/features.py --top-k 50
+python pipeline/run_pipeline.py --data-dir data_sat
 ```
 
-Writes `features/candidates_top50.csv` (all candidates), `features/train_pairs.csv` (judged only),
-and caches embeddings under `cache/`. It also prints the recall-loss line — how many grade≥2
-providers fall **outside** the pool, which no re-ranker can recover.
+Writes `results_data_sat/{bm25,dense_*,rrf_k*}.json` — the full ranked lists Stage 2 reranks.
+This is a full sweep (multiple Matryoshka truncation dims, RRF k/weight combos) so it's the
+slowest step (~6 minutes at `data_sat` scale on CPU/MPS); only `rrf_k60.json` is actually
+consumed downstream.
 
-## 3. Cross-encoder, zero-shot (Stage 2a)
+## 3. Build the feature table
+
+```bash
+python pipeline/features.py --data-dir data_sat --top-k 50
+```
+
+Writes `features_data_sat/candidates_top50.csv` (all candidates), `features_data_sat/train_pairs.csv`
+(judged only), and caches embeddings under `cache_data_sat/`. It also prints the recall-loss
+line — how many grade≥2 providers fall **outside** the pool, which no re-ranker can recover (5
+out of ~2,165 for `data_sat` — a tight pool, not a real recall problem).
+
+## 4. Cross-encoder, zero-shot (Stage 2a)
 
 ```bash
 # CPU-friendly default, safe starting point
-python pipeline/rerank_crossencoder.py --mode score --tag minilm
-
-# stronger/longer-input option on the 3060
-python pipeline/rerank_crossencoder.py --mode score --model Alibaba-NLP/gte-reranker-modernbert-base --batch-size 16 --tag gte --fp16
-
-# heavy option — batch small, expect it to be slow on 6 GB
-python pipeline/rerank_crossencoder.py --mode score --model BAAI/bge-reranker-v2-m3 --batch-size 4 --fp16 --tag bge
+python pipeline/rerank_crossencoder.py --mode score --data-dir data_sat --tag minilm
 ```
 
-Each run writes `results/ce_<tag>.json` (full ranked lists) and `features/ce_scores_<tag>.csv`
-(feature column for the ranker). 130 queries × 50 candidates = 6,500 pairs — seconds on the GPU.
+Writes `results_data_sat/ce_<tag>.json` (full ranked lists) and
+`features_data_sat/ce_scores_<tag>.csv` (feature column for the ranker). At `data_sat` scale
+(51,150 candidate pairs) this took ~14 minutes on CPU — budget accordingly, or move to GPU.
 
-## 4. LambdaMART (Stage 2b) + ablation table
+**On `data_sat`, zero-shot regresses hard** (NDCG@10 0.671 → 0.365) — confirmed out-of-domain
+for consulting/finance text. Its score is **not** fed into LambdaMART below.
+
+## 5. LambdaMART (Stage 2b) + ablation table
 
 ```bash
-python pipeline/rerank_ltr.py --mode ablation                    # text signals only
-python pipeline/rerank_ltr.py --mode ablation --ce-tag minilm    # + cross-encoder score
+python pipeline/rerank_ltr.py --mode ablation --data-dir data_sat --top-k 50            # current: text + structured signals, no CE
+python pipeline/rerank_ltr.py --mode ablation --data-dir data_sat --top-k 50 --ce-tag <tag>   # + cross-encoder score, once a usable CE score exists
 ```
 
-Prints the ablation (RRF → +CE → +LTR), per-fold NDCG@10 with mean/std, and feature importances.
-Predictions are **out-of-fold** (GroupKFold by query), so no query is scored by a model that saw it.
+Prints the ablation (RRF → [+CE] → +LTR), per-fold NDCG@10 with mean/std, and feature
+importances. Predictions are **out-of-fold** (GroupKFold by query), so no query is scored by a
+model that saw it.
 
-## 5. Optional: fine-tune the cross-encoder (do this last)
+## 6. Optional: fine-tune the cross-encoder (do this last)
 
 ```bash
 # 5-fold per-query CV: the ce_scores file it writes is OUT-OF-FOLD
-python pipeline/rerank_crossencoder.py --mode finetune --model cross-encoder/ms-marco-MiniLM-L6-v2 \
-    --epochs 2 --cv-folds 5 --tag cecv --quiet
-python pipeline/rerank_ltr.py --mode ablation --ce-tag cecv     # re-run with the honest scores
+python pipeline/rerank_crossencoder.py --mode finetune --data-dir data_sat \
+    --model cross-encoder/ms-marco-MiniLM-L6-v2 --epochs 2 --cv-folds 5 --tag cecv --quiet
+python pipeline/rerank_ltr.py --mode ablation --data-dir data_sat --ce-tag cecv     # re-run with the honest scores
 ```
 
+**Not yet completed for `data_sat`.** This was started and deliberately stopped (multi-hour
+CPU cost, given the zero-shot regression above) — an open item. With 19,193 judged pairs (vs. a
+few hundred on the archived synthetic run), it has a much better chance of working than a
+zero-shot score suggests; worth revisiting with GPU access.
+
 **Why CV and not a single split.** An earlier version trained on 80% of queries and evaluated on
-the other 20%, then wrote *in-sample* scores for the 104 training queries — which silently made
-every downstream LambdaMART number optimistic. Now each fold trains on K−1 folds and scores only
-its held-out fold, so **every query's `ce_score` comes from a model that never saw that query**.
-The ablation can then be trusted.
+the other 20%, then wrote *in-sample* scores for the training queries — which silently made every
+downstream LambdaMART number optimistic. Now each fold trains on K−1 folds and scores only its
+held-out fold, so **every query's `ce_score` comes from a model that never saw that query**.
 
-**Read this first.** You have **173 grade-3 positives (389 at grade≥2) across 130 queries**.
-That is a very small fine-tuning set, so the run prints zero-shot vs fine-tuned OOF over all 130
-queries and tells you outright whether to keep zero-shot. Expect the delta to be small; if it is
-negative, keep the zero-shot scores.
-
-**Two artefacts, two purposes.** `features/ce_scores_<tag>.csv` is OOF → use it for evaluation.
-`models/ce-<tag>/` is trained on *all* pairs → use it for serving (a served query is unseen by
-construction, so there is no leak there).
+**Two artefacts, two purposes.** `features_data_sat/ce_scores_<tag>.csv` is OOF → use it for
+evaluation. `models_data_sat/ce-<tag>/` is trained on *all* pairs → use it for serving (a served
+query is unseen by construction, so there is no leak there).
 
 ## GPU / VRAM guidance (6.4 GB)
 
@@ -98,73 +119,9 @@ construction, so there is no leak there).
 If scores come back NaN, drop `--fp16` first — same failure class as the MPS NaN bug in
 `finetune_embeddings.py`.
 
-## Guardrails (these decide whether the numbers are trustworthy)
+## Results
 
-1. **Split by query, never randomly.** 130 queries; a random split leaks and inflates.
-2. **Labels come from `ground_truth_llm.json`**, never the retired taxonomy formula.
-3. **Train/serve skew:** `budget_fit` / `seniority_fit` use internal synthetic fields
-   (`budget_lo/hi`, `seniority_needed`, `seniority`). Confirm the production gig payload carries
-   them *before* shipping a ranker that depends on them — otherwise the model learns on features
-   that are missing at serve time.
-4. **Significance:** with 130 queries, treat any delta under **~0.02** as noise.
-   Report paired bootstrap CIs before claiming a win.
-5. **Calibration:** `--export-scores` writes min-max 0–100 per query for the JSON contract.
-   The sponsor's merge (`0.6·taxonomy + 0.4·semantic`) uses magnitude, not just order — document
-   the normalisation method, which is still an open item with the sponsor.
-6. **Keep the plain RRF path.** The developer integrating this has no AI background; the service
-   must always be able to return valid JSON without the learned components.
-
-## Outputs
-
-| Path | What |
-|---|---|
-| `features/candidates_top50.csv` | candidate pool + all features |
-| `features/train_pairs.csv` | judged subset (training labels) |
-| `features/ce_scores_<tag>.csv` | cross-encoder score per pair (LTR feature) |
-| `results/ce_<tag>.json` | CE-reranked lists |
-| `results/ltr_scores.json` | calibrated 0–100 semantic scores (with `--export-scores`) |
-| `models/ltr_xgb.json`, `models/ce-<tag>/` | trained models |
-| `cache/*.npy` | cached embeddings |
-
----
-
-## Real-data run — `data_sat` (2026-09-29)
-
-Every command above also accepts `--data-dir data_sat` (added when this run was done) and
-namespaces its outputs (`features_data_sat/`, `results_data_sat/`, `models_data_sat/`,
-`cache_data_sat/`) so this run never touches the frozen synthetic baseline above.
-
-**Scale.** 1,023 hirers × 2,165 providers (vs. 130 × 104 synthetic), 23,873 LLM-graded pairs
-total (grader `qwen3.8:27b`, see `label.md`), 19,193 of those inside the top-50 RRF pool used
-for training. Grades cluster low: 40.9% grade-0, 46.0% grade-1, 9.7% grade-2, 3.4% grade-3.
-Measured directly against this run's `ground_truth_llm.json` (not `label.md`'s figure, which
-describes the earlier, superseded 774-gig `data_sat` before the data team backfilled
-budget/seniority/availability): **481/1,023 hirers (47.0%) have no provider graded ≥2 at all**
-(RELEVANCE_THRESHOLD=40 in `evaluate.py`). `evaluate_all_hirers` excludes these from the recall
-average (recall is undefined with zero relevant items) but scores them as a hard 0 in NDCG/MRR —
-so R@5/R@10 above are averaged over the ~542 hirers with a real match, while NDCG@10/MRR are not.
-A hard ceiling on P@K/NDCG@K/R@K is expected and is a property of the corpus, not the ranker.
-
-**Fields resolved.** `budget_lo/hi`, `seniority_needed` (hirers) and `rate_per_hour`, `seniority`,
-`available_from`, `availability` (providers) are now present inline on every record — the earlier
-version of `data_sat` was missing these (see `label.md`), which had paused this retrain. Since
-`data_sat` carries them directly (no separate `_with_taxonomy.json`), `features.py` now falls
-back to the main `providers.json`/`hirers.json` when that file is absent.
-
-`avail_immediacy()` was changed to use the structured `available_from` (provider) vs. `start_by`
-(hirer) date gap when present, instead of matching synthetic-only phrases like "immediately"
-against `data_sat`'s "Available from `<date>`, N days a week" strings, which never match and
-would otherwise silently collapse to a constant 0.5 for every real record. That first version of
-the fix still had a bug caught during a review pass before push: `available_from` and `start_by`
-aren't always ISO dates — 966/2,165 providers use the literal sentinel `"now"` and 75/1,023
-hirers use `"asap"` — and unhandled `date.fromisoformat()` on those raised `ValueError`, which
-fell through to the same free-text matcher (which also doesn't recognise "Available now, ..."),
-landing back on the 0.5 default for **47.5% of all candidate rows**. Both sentinels now resolve
-to `date.today()` before comparison; the fallback-default rate dropped to 0.43% of rows (genuine
-missing/unparseable dates only), and `avail_immediacy`'s LambdaMART feature importance moved from
-0.054 (barely above noise) to 0.085 (5th of 9 features) once it carried real signal.
-
-**Results:**
+RRF top-50 → LambdaMART, out-of-fold, against `data_sat`'s 1,023 LLM-graded queries:
 
 | Stage | NDCG@10 | P@5 | R@5 | R@10 | MRR |
 |---|---|---|---|---|---|
@@ -172,27 +129,55 @@ missing/unparseable dates only), and `avail_immediacy`'s LambdaMART feature impo
 | + cross-encoder, zero-shot (`ms-marco-MiniLM-L6-v2`) | 0.3649 | 0.064 | 0.291 | 0.407 | 0.183 |
 | + LambdaMART (RRF/BM25/dense + budget/seniority/avail, no CE) | 0.6591 | 0.152 | 0.677 | 0.861 | 0.340 |
 
-- **Zero-shot cross-encoder regresses hard** on real data (NDCG@10 0.671 → 0.365) — confirmed
-  out-of-domain for consulting/finance text, much more visibly than on the synthetic corpus.
-  Per the project's own "zero-shot first, fine-tune only if the gain is real" rule, its score was
-  **not** carried into LambdaMART as a feature. Fine-tuning under per-query 5-fold CV was started
-  but deliberately **skipped/stopped** for this run (project-owner call, given the zero-shot
-  regression and the multi-hour CPU cost) — this stays a documented open item, not a closed one.
+**Scale.** 1,023 hirers × 2,165 providers, 23,873 LLM-graded pairs total (grader `qwen3.8:27b`,
+see `label.md`), 19,193 of those inside the top-50 RRF pool used for training. Grades cluster
+low: 40.9% grade-0, 46.0% grade-1, 9.7% grade-2, 3.4% grade-3. Measured directly against this
+run's `ground_truth_llm.json` (not `label.md`'s figure, which describes the earlier, superseded
+774-gig `data_sat` before the data team backfilled budget/seniority/availability): **481/1,023
+hirers (47.0%) have no provider graded ≥2 at all** (RELEVANCE_THRESHOLD=40 in `evaluate.py`).
+`evaluate_all_hirers` excludes these from the recall average (recall is undefined with zero
+relevant items) but scores them as a hard 0 in NDCG/MRR — so R@5/R@10 above are averaged over the
+~542 hirers with a real match, while NDCG@10/MRR are not. A hard ceiling on P@K/NDCG@K/R@K is
+expected and is a property of the corpus, not the ranker.
+
+- **Zero-shot cross-encoder regresses hard** — confirmed out-of-domain for consulting/finance
+  text. Per the project's own "zero-shot first, fine-tune only if the gain is real" rule, its
+  score was **not** carried into LambdaMART as a feature (§6 above covers the fine-tuning status).
 - **LambdaMART on structured + retrieval features alone**: NDCG@10 is flat vs. RRF (0.659 vs
   0.671 — inside the project's own ~0.02 noise threshold), but P@5/R@5/R@10/MRR all improve
   meaningfully. Read this as: the learned ranker isn't pulling more relevant items into the very
   top of a tied NDCG score, it's doing a better job spreading relevant items across the top-10 and
-  reducing misses lower in the list — consistent with 1,023 queries giving GroupKFold much more
-  signal than the synthetic run's 130.
+  reducing misses lower in the list.
 - **Feature importance** (mean over 5 folds): `rrf_rank` 0.223, `rrf_score` 0.164, `dense_rank`
   0.154, `seniority_fit` 0.116, `avail_immediacy` 0.085, `budget_fit` 0.085, `dense_cosine` 0.070,
-  `bm25_score` 0.056, `bm25_rank` 0.048. The three structured fields the earlier `data_sat`
-  couldn't compute (`seniority_fit`, `budget_fit`, `avail_immediacy`) rank 4th, 5th and 6th —
-  real, non-trivial weight, which is the main payoff of getting those fields backfilled.
+  `bm25_score` 0.056, `bm25_rank` 0.048. The three structured fields that needed real
+  budget/seniority/availability data to compute (`seniority_fit`, `budget_fit`,
+  `avail_immediacy`) rank 4th, 5th and 6th — real, non-trivial weight, which is the main payoff of
+  those fields being backfilled by the data team.
 
-**Worked examples** (inspected directly against `results_data_sat/rrf_k60.json` /
-`results_data_sat/ltr_sat.json` / `data_sat/ground_truth_llm.json`; regenerate `results_data_sat/`
-with `python pipeline/run_pipeline.py --data-dir data_sat` to reproduce these):
+**Fields backfilled.** `budget_lo/hi`, `seniority_needed` (hirers) and `rate_per_hour`,
+`seniority`, `available_from`, `availability` (providers) are present inline on every record — an
+earlier version of `data_sat` was missing these (see `label.md`), which paused this work until
+the data team backfilled them. `data_sat` carries these fields directly (no separate
+`_with_taxonomy.json` like the archived synthetic corpus), so `features.py` falls back to the
+main `providers.json`/`hirers.json` when no `_with_taxonomy.json` file exists.
+
+`avail_immediacy()` uses the structured `available_from` (provider) vs. `start_by` (hirer) date
+gap, instead of matching fixed phrases like "immediately" against `data_sat`'s "Available from
+`<date>`, N days a week" strings, which never match. A first version of this still had a bug
+caught during review before push: `available_from`/`start_by` aren't always ISO dates — 966/2,165
+providers use the literal sentinel `"now"` and 75/1,023 hirers use `"asap"` — and unhandled
+`date.fromisoformat()` on those raised `ValueError`, falling through to the same non-matching
+text matcher and landing on the 0.5 default for **47.5% of all candidate rows**, silently
+defeating the fix. Both sentinels now resolve to `date.today()` before comparison; the
+fallback-default rate dropped to 0.43%, and `avail_immediacy`'s feature importance moved from
+0.054 (noise) to 0.085 once it carried real signal.
+
+## Worked examples
+
+Inspected directly against `results_data_sat/rrf_k60.json` / `results_data_sat/ltr_sat.json` /
+`data_sat/ground_truth_llm.json`; regenerate `results_data_sat/` with
+`python pipeline/run_pipeline.py --data-dir data_sat` to reproduce these.
 
 - **Why the aggregate numbers look low even on a "success" query** (hire_id=1, "Design AI Agent
   Sales Support System for Life Insurer"): 3 grade-3 matches exist among 2,165 providers. Both
@@ -217,23 +202,53 @@ with `python pipeline/run_pipeline.py --data-dir data_sat` to reproduce these):
   provider is usually still a fine match, not a mismatch. `budget_fit`'s below-band penalty should
   likely be softer than its above-band penalty; this is a plausible explanation for the flat
   NDCG@10 in aggregate (LambdaMART fixes some BM25 failures like the case above while introducing
-  some new ones like this). Not changed in this run -- noted as a follow-up, not fixed silently.
+  some new ones like this). Not changed in this run — noted as a follow-up, not fixed silently.
 
-**Caveats specific to this run** (in addition to the general ones in `label.md`):
-- Only one seed / one fold split was run — no bootstrap CI yet on the LambdaMART deltas, so per
-  guardrail #4 above, treat the P@5/R@5/MRR gains as promising, not proven.
-- Cross-encoder fine-tuning remains untried on this corpus. Given 19,193 judged pairs (vs. a few
-  hundred on synthetic), it has a much better chance of working than the synthetic run's fine-tune
-  did — worth revisiting with GPU access rather than CPU-only.
-- **Pre-existing bug, not introduced by this run**: `retrieval_bm25.py`'s query-side field
-  weighting effectively 4×-weights the title instead of the documented 3× (`title_weight=3`).
-  `BM25Retriever._query_tokens` rebuilds query tokens via `hirer_bm25_tokens(h_like, ...)`, where
-  `h_like["hire_description"]` is set to the *already-concatenated* `hirer_text(h)` (which itself
-  includes the title) rather than the raw `hire_description` field — so the title's tokens are
-  counted once via `title_tokens * title_weight` and once more inside `body_tokens`. This affects
-  every BM25/RRF run in this repo, synthetic and `data_sat` alike (it predates this session), so
-  it does not change the *relative* comparisons above, but it means "refined BM25" is stronger
-  than its own documentation claims. Flagged here, not fixed here — fixing it would change the
-  frozen synthetic baseline numbers this README already documents elsewhere, which needs its own
-  decision, not a silent edit inside a data_sat retrain.
-- `--export-scores` (calibrated 0–100 contract output) was not run for this dataset yet.
+## Guardrails (these decide whether the numbers are trustworthy)
+
+1. **Split by query, never randomly.** 1,023 queries; a random split leaks and inflates.
+2. **Labels come from `ground_truth_llm.json`**, never the retired taxonomy formula.
+3. **Train/serve skew:** confirm the production gig payload actually carries `budget_lo/hi`,
+   `seniority_needed`, `rate_per_hour`, `seniority`, `available_from`/`availability` before
+   shipping a ranker that depends on them — otherwise the model learns on features that are
+   missing at serve time. (Resolved for `data_sat` itself — see "Fields backfilled" above — this
+   guardrail is about the *production* payload, a separate question.)
+4. **Significance:** treat any delta under **~0.02** as noise. Only one seed/fold-split has been
+   run so far — report paired bootstrap CIs before claiming a win.
+5. **Calibration:** `--export-scores` writes min-max 0–100 per query for the JSON contract; not
+   yet run for `data_sat`. The sponsor's merge (`0.6·taxonomy + 0.4·semantic`) uses magnitude,
+   not just order — document the normalisation method, which is still an open item with the
+   sponsor.
+6. **Keep the plain RRF path.** The developer integrating this has no AI background; the service
+   must always be able to return valid JSON without the learned components.
+7. **Pre-existing bug, not `data_sat`-specific**: `retrieval_bm25.py`'s query-side field
+   weighting effectively 4×-weights the title instead of the documented 3× (`title_weight=3`).
+   `BM25Retriever._query_tokens` rebuilds query tokens via `hirer_bm25_tokens(h_like, ...)`, where
+   `h_like["hire_description"]` is set to the *already-concatenated* `hirer_text(h)` (which itself
+   includes the title) rather than the raw `hire_description` field — so the title's tokens are
+   counted once via `title_tokens * title_weight` and once more inside `body_tokens`. This affects
+   every BM25/RRF run in this repo, so it doesn't change the *relative* comparisons above, but it
+   means "refined BM25" is stronger than its own documentation claims. Flagged, not fixed —
+   fixing it moves results for both `data_sat` and the archived synthetic corpus, which needs its
+   own decision.
+
+## Outputs
+
+| Path | What |
+|---|---|
+| `features_data_sat/candidates_top50.csv` | candidate pool + all features |
+| `features_data_sat/train_pairs.csv` | judged subset (training labels) |
+| `features_data_sat/ce_scores_<tag>.csv` | cross-encoder score per pair (LTR feature) |
+| `results_data_sat/ce_<tag>.json` | CE-reranked lists |
+| `results_data_sat/ltr_sat.json` | LambdaMART out-of-fold ranked lists (the "Results" table above) |
+| `results_data_sat/ltr_<tag>_scores.json` | calibrated 0–100 semantic scores (with `--export-scores`) |
+| `models_data_sat/ltr_sat_xgb.json`, `models_data_sat/ce-<tag>/` | trained models |
+| `cache_data_sat/*.npy` | cached embeddings |
+
+`results_data_sat/` and `cache_data_sat/` are git-ignored (regenerable, and large at this
+corpus scale — the full Stage-1 sweep is ~340 MB); `features_data_sat/` and `models_data_sat/`
+are committed, matching the archived synthetic corpus's convention.
+
+An archived synthetic-data baseline (the same pipeline, run against `pipeline/data/` — a smaller,
+synthetic corpus, `--data-dir data`) is preserved in `pipeline/data/`, `results/`, `features/`,
+`models/` for reference; not covered here — see git history for its results and methodology.
