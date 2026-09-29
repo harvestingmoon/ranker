@@ -264,8 +264,17 @@ def main():
     if args.ce_tag:
         print(f"  + cross-encoder     NDCG@10={m_ce['ndcg@10']:.4f}  P@5={m_ce['precision@5']:.3f}  MRR={m_ce['mrr']:.3f}")
     print(f"  + LambdaMART (OOF)  NDCG@10={m_ltr['ndcg@10']:.4f}  P@5={m_ltr['precision@5']:.3f}  MRR={m_ltr['mrr']:.3f}")
-    print("\nReminder: with 130 queries, treat any delta under ~0.02 as noise. Report paired "
-          "bootstrap CIs before claiming an improvement.")
+    # The ~0.02 figure comes from the 130-query synthetic corpus. It is NOT
+    # valid at data_sat's scale: standard error scales as 1/sqrt(n), so at
+    # 1,023 queries the bar is ~2.8x tighter (~0.007). Printing a flat 0.02
+    # here caused a real NDCG@10 regression to be read as "flat vs RRF".
+    n_q = len({r["hire_id"] for r in rows}) if rows else 0
+    threshold = 0.02
+    if n_q:
+        threshold = 0.02 * (130.0 / n_q) ** 0.5
+    print(f"\nReminder: {n_q or '?'} queries -- treat any delta under "
+          f"~{threshold:.3f} as noise. Report paired bootstrap CIs before claiming "
+          f"an improvement.")
 
 
 if __name__ == "__main__":

@@ -30,9 +30,10 @@ pip install -r pipeline/requirements-rerank.txt
 python -c "import torch, xgboost, sentence_transformers; print(torch.cuda.is_available())"
 ```
 
-`fi-bench` already has torch 2.11.0+cu130 and sees the RTX 3060 Laptop GPU (6.4 GB) where
-available; this repo's `data_sat` run so far has been CPU/MPS-only (no CUDA host), which is why
-cross-encoder fine-tuning (§5) hasn't been completed yet — it's slow without a GPU.
+`fi-bench` already has torch 2.11.0+cu130 and sees the RTX 3060 Laptop GPU (6.4 GB). An earlier
+`data_sat` run was CPU/MPS-only, which is why cross-encoder fine-tuning (§6) was originally left
+undone — it is slow without a GPU. **It has since been completed on the RTX 3060 (~65 min for
+5 folds); §6 records the result, which is that the fine-tuned CE is NOT used as a ranker feature.**
 If `import sentence_transformers` fails after install, it's a transformers-version clash —
 `sentence-transformers` may pin `transformers<5`; check with `pip check` before assuming the env is fine.
 
@@ -92,10 +93,19 @@ python pipeline/rerank_crossencoder.py --mode finetune --data-dir data_sat \
 python pipeline/rerank_ltr.py --mode ablation --data-dir data_sat --ce-tag cecv     # re-run with the honest scores
 ```
 
-**Not yet completed for `data_sat`.** This was started and deliberately stopped (multi-hour
-CPU cost, given the zero-shot regression above) — an open item. With 19,193 judged pairs (vs. a
-few hundred on the archived synthetic run), it has a much better chance of working than a
-zero-shot score suggests; worth revisiting with GPU access.
+**Completed for `data_sat` on an RTX 3060 (5 folds, 2 epochs, ~65 min).** Result — and the reason
+the CE is **not** a ranker feature:
+
+| CE variant (1,023 queries) | P@5 | NDCG@10 | MRR |
+|---|---|---|---|
+| zero-shot | 0.064 | 0.3649 | 0.183 |
+| fine-tuned (OOF) | 0.116 | **0.5552** ± 0.0228 | 0.295 |
+
+Fine-tuning lifts the CE by **+0.190 NDCG@10** — it is no longer catastrophic. But folding
+`ce_score` into LambdaMART costs **−0.0246 NDCG@10 [−0.0349, −0.0141]** and buys only
+**+0.0259 MRR [+0.0123, +0.0396]**, so the shipped ranker (`models_data_sat/noce_xgb.json`) omits
+it. The OOF scores are still written for measurement, and the fine-tuned weights are kept for the
+semantic-score role.
 
 **Why CV and not a single split.** An earlier version trained on 80% of queries and evaluated on
 the other 20%, then wrote *in-sample* scores for the training queries — which silently made every
