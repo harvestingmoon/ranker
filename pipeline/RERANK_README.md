@@ -190,6 +190,35 @@ missing/unparseable dates only), and `avail_immediacy`'s LambdaMART feature impo
   couldn't compute (`seniority_fit`, `budget_fit`, `avail_immediacy`) rank 4th, 5th and 6th —
   real, non-trivial weight, which is the main payoff of getting those fields backfilled.
 
+**Worked examples** (inspected directly against `results_data_sat/rrf_k60.json` /
+`results_data_sat/ltr_sat.json` / `data_sat/ground_truth_llm.json`; regenerate `results_data_sat/`
+with `python pipeline/run_pipeline.py --data-dir data_sat` to reproduce these):
+
+- **Why the aggregate numbers look low even on a "success" query** (hire_id=1, "Design AI Agent
+  Sales Support System for Life Insurer"): 3 grade-3 matches exist among 2,165 providers. Both
+  RRF and LambdaMART surface all 3 within the top-6–9, but the other 7-of-10 slots are grade-1
+  "in the neighborhood but not it" profiles — with only 3 truly-relevant providers in the whole
+  catalog, P@5≈0.15 is close to the ceiling even when retrieval is working correctly.
+- **A genuine LambdaMART win, and why**: hire_id=745 ("Design RCT for Refugee Cash Transfer
+  Program") — RRF's top-5 is all grade-0, including two "Transfer *Pricing* Specialists": a pure
+  BM25 lexical collision on the word "Transfer" (cash *Transfer* program vs. *Transfer* pricing),
+  unrelated in meaning. LambdaMART's top-3 are all genuinely relevant (poverty/social-protection/
+  policy-evaluation specialists) — dense embeddings + structured features override the bad
+  lexical match. NDCG@10: 0.095 → 0.917.
+- **A "loss" that is measurement noise, not a real regression**: hire_id=14 ("Assess Acoustic
+  Performance for Staff Village Building") has exactly **one judged pair in its entire pool**
+  (provider 1926, grade-1/score=33). RRF happened to rank it #1 (NDCG@10=1.0); LambdaMART ranked
+  it #10 (NDCG@10=0.289). With a single graded item, NDCG@10 swings on one rank position — this
+  is pool-sparsity variance, not evidence LambdaMART got the query wrong.
+- **A genuine LambdaMART weakness**: hire_id=247 ("Consolidate Contract Playbooks into Single
+  Storage", budget $160-215/hr) — RRF ranked grade-2 match provider 252 at #3; LambdaMART demoted
+  it to #17. Provider 252's rate ($135/hr) sits *below* the hirer's budget floor, and `budget_fit`
+  penalizes any rate outside `[budget_lo, budget_hi]` symmetrically — but a cheaper-than-budget
+  provider is usually still a fine match, not a mismatch. `budget_fit`'s below-band penalty should
+  likely be softer than its above-band penalty; this is a plausible explanation for the flat
+  NDCG@10 in aggregate (LambdaMART fixes some BM25 failures like the case above while introducing
+  some new ones like this). Not changed in this run -- noted as a follow-up, not fixed silently.
+
 **Caveats specific to this run** (in addition to the general ones in `label.md`):
 - Only one seed / one fold split was run — no bootstrap CI yet on the LambdaMART deltas, so per
   guardrail #4 above, treat the P@5/R@5/MRR gains as promising, not proven.
