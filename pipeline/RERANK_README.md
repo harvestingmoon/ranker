@@ -118,6 +118,26 @@ Prints each input's metrics and the fused row, and writes the fused list. Fusion
 strict Pareto point against `linz` alone (P@5 +0.0049 and MRR +0.0082 both significant, NDCG@10
 unchanged within CI).
 
+Adding the binary-relevance model makes it a three-way frontier rather than a strict win:
+
+```bash
+python pipeline/rerank_ltr.py --mode ablation --data-dir data_sat --top-k 50 --linear-gain \
+    --normalize-scores zscore --objective rank:map --binary-relevance --tag mapbin
+python pipeline/fuse_rankers.py --data-dir data_sat --inputs linz noce mapbin \
+    --weights 0.5 0.2 0.3 --out fused_three.json          # best R@10 (0.891)
+```
+
+### Objectives and label binarisation
+
+`--objective {rank:ndcg,rank:map,rank:pairwise}` selects the ranking loss. `rank:map` and
+`rank:pairwise` **reject graded labels**, so they must be paired with:
+
+`--binary-relevance` — trains on grade>=2 instead of the raw 0-3 grade, i.e. the same relevance bar
+P@5/R@10/MRR score against. All reported metrics still use the graded ground truth, so numbers stay
+comparable. Measured: it produces the **best P@5 (0.158) and MRR (0.355) of any configuration**, at
+a large NDCG@10 cost (0.555). Use it when the top-5 shortlist is the deliverable: the two metrics
+genuinely pull in opposite directions, so pick one and say which.
+
 ## 6. Optional: fine-tune the cross-encoder (do this last)
 
 ```bash

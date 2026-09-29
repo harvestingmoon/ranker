@@ -68,6 +68,8 @@ MODEL_PARAMS = dict(
     objective="rank:ndcg", n_estimators=300, learning_rate=0.05, max_depth=4,
     subsample=0.9, colsample_bytree=0.9, min_child_weight=2, reg_lambda=1.0,
 )
+# Set by --binary-relevance in main(); read by train_labels().
+BINARY_LABELS = False
 DEFAULT_FEATURES = ["bm25_score", "bm25_rank", "dense_cosine", "dense_rank",
                     "rrf_score", "rrf_rank", "budget_fit", "seniority_fit", "avail_immediacy"]
 # Features whose raw scale drifts per query, so --normalize-scores rescales them
@@ -119,6 +121,17 @@ def normalize_by_query(rows, keys, how):
                 for r in group:
                     if r[key] == r[key]:
                         r[key] = 1.0 / rank_of[r[key]]
+
+
+def train_labels(rows):
+    """Training target for a row list.
+
+    With --binary-relevance this is grade>=2 (the bar P@5/R@10/MRR use); otherwise
+    the raw 0-3 grade. Only ever applied to TRAINING labels -- every reported metric
+    is computed against the graded ground truth, so the columns stay comparable.
+    """
+    y = np.array([r["label"] for r in rows], dtype=np.float32)
+    return (y >= 2).astype(np.float32) if BINARY_LABELS else y
 
 
 def load_json(p):
@@ -201,7 +214,7 @@ def train_oof(rows, features, folds, seed, gt, rrf_full):
         if not tr_rows:
             continue
         X = np.array([[r[f] for f in features] for r in tr_rows], dtype=np.float32)
-        y = np.array([r["label"] for r in tr_rows], dtype=np.float32)
+        y = train_labels(tr_rows)
         groups = [sum(1 for r in tr_rows if r["hire_id"] == q) for q in tr_q]
 
         model = xgb.XGBRanker(**MODEL_PARAMS, random_state=seed, n_jobs=4)
@@ -244,6 +257,17 @@ def main():
                     help="rescale the score features within each query (recommended: zscore). "
                          "Their raw scale drifts per query, so an absolute tree split means "
                          "something different for every gig")
+    ap.add_argument("--objective", default="rank:ndcg",
+                    choices=["rank:ndcg", "rank:map", "rank:pairwise"],
+                    help="ranking objective. rank:map/rank:pairwise REJECT graded labels, so "
+                         "pair them with --binary-relevance")
+    ap.add_argument("--binary-relevance", action="store_true",
+                    help="binarise the TRAINING labels to grade>=2, which is the relevance bar "
+                         "P@5/R@10/MRR already score against. Evaluation still uses the graded "
+                         "ground truth, so NDCG stays comparable -- but the model now optimises "
+                         "membership of the top-5 rather than graded ordering, and the two pull "
+                         "in opposite directions (measured: best P@5/MRR of anything tried, "
+                         "worst NDCG@10)")
     ap.add_argument("--linear-gain", action="store_true",
                     help="rank:ndcg with ndcg_exp_gain=False, matching evaluate.py's linear-gain "
                          "NDCG instead of XGBoost's default exponential (2^label-1) gain")
@@ -256,9 +280,16 @@ def main():
                     help="dataset folder under pipeline/ (e.g. data_sat); outputs are namespaced accordingly")
     args = ap.parse_args()
     set_dataset(args.data_dir)
+    global BINARY_LABELS
+    BINARY_LABELS = args.binary_relevance
+    if args.objective != MODEL_PARAMS["objective"]:
+        MODEL_PARAMS["objective"] = args.objective
+        print(f"objective: {args.objective}")
+    if args.binary_relevance:
+        print("training labels: BINARY (grade>=2) -- metrics still use the graded ground truth")
     if args.linear_gain:
         MODEL_PARAMS["ndcg_exp_gain"] = False
-        print("objective: rank:ndcg with LINEAR gain (training aligned with evaluate.py)")
+        print("gain: LINEAR (ndcg_exp_gain=False), aligned with evaluate.py")
 
     MODELS_DIR.mkdir(exist_ok=True)
     rrf_full = load_json(RESULTS_DIR / "rrf_k60.json")
@@ -303,7 +334,7 @@ def main():
     # ---------------- final trained model on all queries ------------------
     all_rows = sorted([r for r in rows if r["label"] is not None], key=lambda r: r["hire_id"])
     X = np.array([[r[f] for f in features] for r in all_rows], dtype=np.float32)
-    y = np.array([r["label"] for r in all_rows], dtype=np.float32)
+    y = train_labels(all_rows)
     all_q = sorted({r["hire_id"] for r in all_rows})
     groups = [sum(1 for r in all_rows if r["hire_id"] == q) for q in all_q]
     final = xgb.XGBRanker(**MODEL_PARAMS, random_state=args.seed, n_jobs=4)

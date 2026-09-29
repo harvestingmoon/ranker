@@ -129,6 +129,27 @@ measures and gives back a little precision-at-5.
   *percentile* normalisation (0.671) and *rank* normalisation — worse than z-score; `rank:pairwise`
   (0.651); deeper trees (0.678); 600 trees @ lr 0.03 (0.686) and a 3-seed ensemble (0.687) — both
   within noise of 0.685; fusing the ranker with RRF — inconclusive.
+- **Adding new *signal* did not work either, and this closes the "more features" direction.**
+  A second encoder family (`BAAI/bge-small-en-v1.5`) cosine: −0.0005 NDCG@10, inconclusive
+  (P@5 −0.0031, worse). Field-level similarity — scoring each of the five provider fields against
+  the gig separately, plus max/mean/which-field — **−0.0204 NDCG@10 [−0.0268, −0.0141] and
+  −0.0267 R@10, both significantly worse**. Eleven near-duplicate text-similarity columns dilute
+  the strong signals rather than adding to them. Combined with the feature/hyperparameter/ensemble
+  results above, the 9-feature model is **saturated on text signal**: the remaining headroom
+  (oracle NDCG@10 0.983 vs 0.684 shipped) needs a *better relevance model*, not more similarity
+  columns — see the frontier note below.
+- **Metric frontier — you cannot maximise all four at once.** Measured, with CIs:
+
+  | To maximise | Configuration | NDCG@10 | P@5 | R@10 | MRR |
+  |---|---|---|---|---|---|
+  | **NDCG@10** | fused 0.70·`linz` + 0.30·`noce` | **0.684** | 0.146 | 0.858 | 0.341 |
+  | **R@10** | fused 0.50·`linz` + 0.20·`noce` + 0.30·`mapbin` | 0.650 | 0.158 | **0.891** | 0.354 |
+  | **P@5** | fused 0.40·`linz` + 0.30·`noce` + 0.30·`mapbin` | 0.648 | **0.159** | 0.885 | 0.354 |
+  | **MRR** | `mapbin` alone | 0.555 | 0.158 | 0.866 | **0.355** |
+
+  Adding the binary-relevance model (`mapbin`) to the fusion raises P@5/R@10/MRR but costs
+  NDCG@10 significantly (−0.007 to −0.037 depending on weight) — there is no weight that improves
+  both. The trade is monotone, so pick the metric you report and cite the matching row.
 - **One sharp trade-off worth knowing**: training on *binary* relevance (grade ≥2) with
   `rank:map` optimises exactly what P@5/R@10/MRR measure and gives the **best P@5 (0.158) and MRR
   (0.348) of anything tried**, but collapses NDCG@10 to 0.554. If the top-5 shortlist is what
