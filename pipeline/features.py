@@ -149,7 +149,7 @@ def grade_from_score(score: int) -> int:
 
 def dense_matrix(hirers, providers, model_name: str, dim, cache_tag: str):
     """Provider/query embeddings, cached to .npy so re-runs are free."""
-    CACHE_DIR.mkdir(exist_ok=True)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
     doc_path = CACHE_DIR / f"providers_{cache_tag}.npy"
     qry_path = CACHE_DIR / f"hirers_{cache_tag}.npy"
     if doc_path.exists() and qry_path.exists():
@@ -176,7 +176,7 @@ def main():
     args = ap.parse_args()
     set_dataset(args.data_dir)
 
-    FEAT_DIR.mkdir(exist_ok=True)
+    FEAT_DIR.mkdir(parents=True, exist_ok=True)
     providers = load_json("providers.json")
     hirers = load_json("hirers.json")
     # Synthetic data keeps budget/seniority fields in a separate _with_taxonomy
@@ -252,6 +252,15 @@ def main():
                 "dense_rank": dense_pos.get(pid, 0),
                 "rrf_score": round(float(rrf_score), 8),
                 "rrf_rank": rrf_pos,
+                # Schema-v2 field, populated on 86.9% of providers. This is the one
+                # new v2 field that can affect ranking: it varies within a query, so
+                # a per-query-normalised learner can split on it. `duration_weeks_*`
+                # cannot -- it is constant across a query's candidates, so it carries
+                # no within-query ordering information and is deliberately not a
+                # feature. Missing values are written as 0; note that this makes an
+                # unknown-experience provider look like the least experienced in its
+                # pool rather than being imputed.
+                "exp_years": round(float(p_tax.get("years_experience") or 0), 1),
                 "budget_fit": round(budget_fit(h_tax.get("budget_lo", 0), h_tax.get("budget_hi", 0),
                                                p_tax.get("rate_per_hour", 0)), 4),
                 "seniority_fit": round(seniority_fit(h_tax.get("seniority_needed", ""),
