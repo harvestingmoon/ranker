@@ -23,12 +23,22 @@ oracle = {h: [p for p, _ in sorted(r.items(), key=lambda kv: -kv[1])] for h, r i
 bm25, dense, tax = L(V5 / "bm25.json"), L(V5 / "dense_full.json"), L(TX / "taxonomy.json")
 sc = lambda d, h: [(int(p), 0.0) for p in d.get(h, [])]      # noqa: E731
 
+
+def rrf_file(k):
+    """RRF consumes ranks only, so rrf_k*.json is pure derived output (~31 MB each).
+    Derive it from the base retrievals when the file is absent -- no re-embedding."""
+    p = V5 / f"rrf_k{k}.json"
+    if p.exists():
+        return L(p)
+    return {h: [pid for pid, _ in rrf_fuse(sc(bm25, h), sc(dense, h), k=k)] for h in q}
+
+
 rows = [
-    ("Stage 1 — BM25 (refined)", L(V5 / "bm25.json")),
-    ("Stage 1 — Dense (mxbai-1024)", L(V5 / "dense_full.json")),
-    ("Stage 1 — RRF k=10", L(V5 / "rrf_k10.json")),
-    ("Stage 1 — RRF k=60", L(V5 / "rrf_k60.json")),
-    ("Stage 1 — RRF k=100", L(V5 / "rrf_k100.json")),
+    ("Stage 1 — BM25 (refined)", bm25),
+    ("Stage 1 — Dense (mxbai-1024)", dense),
+    ("Stage 1 — RRF k=10", rrf_file(10)),
+    ("Stage 1 — RRF k=60", rrf_file(60)),
+    ("Stage 1 — RRF k=100", rrf_file(100)),
     ("Stage 2 — LambdaMART, 9 feat", L(V5 / "v5_lin.json")),
     ("Stage 2 — + industry features", L(V5 / "v5_tax.json")),
     ("Stage 2 — + taxonomy features (15 feat)", L(TX / "v5tax_lin.json")),
