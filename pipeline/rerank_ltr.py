@@ -354,7 +354,12 @@ def main():
               "graded ground truth")
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    rrf_full = load_json(RESULTS_DIR / "rrf_k60.json")
+    # The tail beyond the top-k pool only pads each ranked list to a full
+    # permutation; no metric at K<=10 reads it. Tolerate the dump being absent
+    # so training runs from candidates_top50.csv alone (it is ~31 MB and
+    # regenerable with `run_pipeline.py --data-dir data/data_set_v5`).
+    _rrf_path = RESULTS_DIR / "rrf_k60.json"
+    rrf_full = load_json(_rrf_path) if _rrf_path.exists() else {}
     gt = load_json(DATA_DIR / "ground_truth_llm.json")
 
     rows, features = load_candidates(args.top_k, args.ce_tag, args.ce_normalize, args.taxonomy)

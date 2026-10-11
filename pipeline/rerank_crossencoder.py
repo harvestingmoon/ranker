@@ -115,7 +115,11 @@ def score(args):
     rows = list(csv.DictReader(cand_path.open()))
     providers_by_id = {p["provider_id"]: p for p in load_json(DATA_DIR / "providers.json")}
     hirers_by_id = {h["hire_id"]: h for h in load_json(DATA_DIR / "hirers.json")}
-    rrf_full = load_json(RESULTS_DIR / "rrf_k60.json")
+    # The tail beyond the top-k pool only pads the list to a full permutation;
+    # nothing at K<=50 reads it. Tolerate its absence so the CE can run from
+    # candidates_top50.csv alone (the RRF dump is ~31 MB and regenerable).
+    _rrf_path = RESULTS_DIR / "rrf_k60.json"
+    rrf_full = load_json(_rrf_path) if _rrf_path.exists() else {}
     gt = load_json(DATA_DIR / "ground_truth_llm.json")
 
     device = pick_device(args.device)
@@ -217,7 +221,11 @@ def finetune(args):
     print(f"candidates to score: {len(cand_rows)}   training pairs: {len(rows)}")
     providers_by_id = {p["provider_id"]: p for p in load_json(DATA_DIR / "providers.json")}
     hirers_by_id = {h["hire_id"]: h for h in load_json(DATA_DIR / "hirers.json")}
-    rrf_full = load_json(RESULTS_DIR / "rrf_k60.json")
+    # The tail beyond the top-k pool only pads the list to a full permutation;
+    # nothing at K<=50 reads it. Tolerate its absence so the CE can run from
+    # candidates_top50.csv alone (the RRF dump is ~31 MB and regenerable).
+    _rrf_path = RESULTS_DIR / "rrf_k60.json"
+    rrf_full = load_json(_rrf_path) if _rrf_path.exists() else {}
     gt = load_json(DATA_DIR / "ground_truth_llm.json")
 
     queries = sorted({r["hire_id"] for r in cand_rows}, key=int)
