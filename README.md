@@ -1,200 +1,138 @@
-# Senseigigs — Stage-2 re-ranking for the gig↔showcase matching search
+# Senseigigs — gig ↔ provider matching: retrieval + Stage-2 ranking
 
-Retrieval (Stage 1) returns candidates; this repo holds the **Stage-2 rankers** that order
-them, plus the feature builder and evaluation tooling used to measure both. The pipeline is
-trained and evaluated on **`pipeline/data_sat`** — real gig/provider data from the
-Scrape-and-Tag pipeline (1,023 gigs × 2,165 providers, 22,289 LLM-graded pairs; see
-`pipeline/label.md`).
+Given a gig (a hirer's request), return the providers best suited to do it. Stage 1 retrieves
+candidates with two text retrievers fused by RRF; Stage 2 re-orders the top 50 with a LambdaMART
+ranker that combines the retrieval scores with **SkillsFuture tag-match features**.
 
-Pipeline shape:
+The corpus is **`pipeline/data/data_set_v5`** — 1,106 gigs × 3,024 provider showcases, with
+**24,070 LLM-graded pairs** (0–3, `qwen3.8:27b`, prompt `rubric_01.v5`). The ranker reads the
+same corpus with the SkillsFuture tags attached, **`pipeline/data/data_set_v5_tax`** (identical
+text; `tags` added by `enrich_v5_with_tags.py`).
 
 ```
-gig query → [refined BM25 ‖ mxbai dense] → RRF → top-50 candidates
-          → LambdaMART over [text scores + business signals] (Stage 2)
-          → fused with the previous ranker (RRF of the two lists, w=0.7)
-          → 0-100 calibrated scores
+gig ─► [refined BM25 ‖ mxbai dense (1024-d)] ─► RRF (k=60) ─► top-50 candidates
+    ─► LambdaMART over 17 features:
+         retrieval   bm25 / dense / rrf  scores and ranks (scores z-scored per gig)
+         tags        tag_level, spec / skill coverage, rarity-weighted skill coverage,
+                     soft skill similarity, category match, has-tags flags
+    ─► ranked providers (+ 0–100 score)
 ```
 
-The cross-encoder scores candidates during development but is **not** a ranker feature (see
-Results — measured negative on real data), so it is absent from the serving path above.
+## Results
+
+Out-of-fold (GroupKFold by gig, no gig is scored by a model that saw it), all 1,106 gigs.
+Relevance for P/R/MRR is grade ≥ 2. Noise floor at this size ≈ **0.007**.
+
+All rows are scored against the full 24,070-pair label set. "Trained on" says which labels
+the model learned from; the clean comparison is between the two rows trained on the original
+labels (see "Why the tags help" below).
+
+| System | Trained on | Artifact (`results_data/data_set_v5_tax/`) | NDCG@10 | NDCG@5 | P@5 | P@10 | R@10 | MRR |
+|---|---|---|---|---|---|---|---|---|
+| Stage 1 — RRF k=60 | — | — | 0.8757 | 0.8817 | 0.8745 | 0.8039 | 0.6197 | 0.9698 |
+| Stage 2 — LambdaMART, 9 features (previous) | original 21,696 | `v5tax_lin_orig.json` | 0.8766 | 0.8840 | 0.8750 | 0.8037 | 0.6218 | 0.9714 |
+| Stage 2 — LambdaMART + tag features | original 21,696 | `v5tax_tags_orig.json` | 0.8954 | 0.9002 | 0.8967 | 0.8288 | 0.6432 | 0.9770 |
+| **Stage 2 — LambdaMART + tag features (shipped)** | all 24,070 | `v5tax_tags.json` | **0.8982** | **0.9018** | **0.8991** | **0.8304** | **0.6449** | **0.9774** |
+
+Tags vs previous, both trained on the original labels, paired bootstrap (10k resamples):
+
+| Metric | Δ | 95% CI | Verdict |
+|---|---|---|---|
+| NDCG@10 | **+0.0188** | [+0.0145, +0.0231] | better — positive on all 3 fold splits (+0.019 / +0.017 / +0.012) |
+| P@5 | **+0.0217** | [+0.0150, +0.0286] | better |
+| R@10 | **+0.0215** | [+0.0153, +0.0278] | better |
+| MRR | +0.0055 | [−0.0001, +0.0115] | crosses 0 |
+
+Full write-up, including the earlier rejected variants: [`ablation.md`](ablation.md).
+
+### Why the tags help, and why an earlier test said they didn't
+
+- **The tags carry signal the text retrievers miss.** Bucket the candidates by tag match
+  (none → shared category → shared specialisation → shared specialisation *and* skill): at
+  RRF ranks 31–50 the share graded ≥ 2 climbs 27% → 37% → 52% → 74%. Controlling for RRF rank,
+  the match level still correlates with the grade (Spearman +0.25).
+- **The original labels could not see it.** The judging pool was built from the text
+  retrievers' top results, so a provider those retrievers ranked low was usually never graded —
+  and `evaluate.py` scores an ungraded pair as grade 0. The tag ranker promotes exactly those
+  providers: before re-grading, 13% of its top-10 was ungraded, which read as a −0.04 NDCG@10
+  regression (`ablation.md` §2, the "+ taxonomy features" row).
+- **So we graded them.** The 2,383 ungraded pairs that any tag variant placed in its top-10 were
+  graded with the same model and prompt (a 60-pair re-grade of already-graded pairs reproduced
+  **60/60** grades exactly; 9 pairs failed on malformed replies). 67% came back grade ≥ 2.
+  They are in `pipeline/data/data_set_v5/judgments_topup_tags.jsonl` and merged by
+  `merge_topup_grades.py`. With them, both systems' top-10s are ~99% graded and the tags win.
+- **Exact matching is the right default for the hierarchy.** Category (37 values) and
+  specialisation (144) are a closed vocabulary. Skills (825) are not: exact string match misses
+  near-synonyms, so `skill_soft` (embedding similarity of the skill names) adds a middle tier.
+  Industry is left out: a provider's industry is always one of its tag categories.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `pipeline/data_sat/` | Real corpus + LLM-graded relevance labels (the dataset the results below use) |
-| `pipeline/label.md` | How `data_sat` was built and graded — pool construction, grader model, caveats |
-| `pipeline/import_scrape_and_tag.py`, `pipeline/build_judging_pools_sat.py` | Build `data_sat/` from raw Scrape-and-Tag CSVs and generate its judging pools |
-| `pipeline/features.py` | Feature builder: candidate pool + BM25/dense/RRF scores + budget/seniority/availability signals + labels |
-| `pipeline/rerank_crossencoder.py` | Cross-encoder re-ranker: zero-shot scoring, and fine-tuning under **per-query K-fold CV** |
-| `pipeline/rerank_ltr.py` | LambdaMART (XGBoost) ranker + ablation report. `--linear-gain` aligns the training gain with `evaluate.py`; `--normalize-scores zscore` rescales per query; `--ce-tag`/`--ce-normalize` optionally add cross-encoder scores |
-| `pipeline/fuse_rankers.py` | Weighted reciprocal-rank fusion of ranked lists — how the shipped fused ranker is produced |
-| `pipeline/finetune_embeddings.py` | Dense embedding fine-tune — Matryoshka-aware loss, CUDA, collapse guard |
-| `pipeline/RERANK_README.md` | Runbook: exact commands, VRAM guidance, pitfalls, worked query examples |
-| `pipeline/evaluate.py` | P@K / R@K / NDCG@K / MRR (linear gain, relevance bar = score ≥ 40 ⇔ grade ≥ 2) |
-| `pipeline/retrieval_*.py` | Stage-1 retrievers (BM25, dense, RRF) |
-| `pipeline/features_data_sat/`, `pipeline/results_data_sat/*`, `pipeline/models_data_sat/` | Built feature tables, result lists and trained model for `data_sat` |
-| `pipeline/data/`, `pipeline/results/`, `pipeline/features/`, `pipeline/models/` | Archived synthetic-data baseline — kept for reference only, not covered below; see git history |
+| `pipeline/data/data_set_v5/` | Corpus + labels: `hirers.json`, `providers.json`, `llm_judgments_merged.json` (0–3), `ground_truth_llm.json` (0/33/67/100), judging pools, `judgments_topup_tags.jsonl` (the 2,374 grades added for the tag test) |
+| `pipeline/data/data_set_v5_tax/` | The same corpus with the SkillsFuture `tags` grafted on — what the shipped ranker reads |
+| `pipeline/run_pipeline.py`, `retrieval_*.py` | Stage 1: refined BM25, mxbai dense, RRF |
+| `pipeline/features.py` | Builds `features_data/<corpus>/candidates_top50.csv` (top-50 pool + retrieval features + labels) |
+| `pipeline/tag_features.py` | Builds `tag_features.csv`, the 8 tag-match features. Run in its own process (torch) |
+| `pipeline/rerank_ltr.py` | LambdaMART (XGBoost `rank:ndcg`). Shipped flags: `--linear-gain --normalize-scores zscore --tag-features` |
+| `pipeline/tag_ablation.py` | The tags-vs-no-tags comparison above, train-on-original / evaluate-on-all |
+| `pipeline/merge_topup_grades.py` | Folds the top-up grades into a corpus's label files (idempotent) |
+| `pipeline/evaluate.py` | P@K / R@K / NDCG@K / MRR (linear gain; relevant = score ≥ 40 ⇔ grade ≥ 2) |
+| `pipeline/final_ablation.py`, `paired_bootstrap.py`, `residual_analysis.py`, `why_recall_low.py` | Stage-1 / Stage-2 ablation harnesses behind `ablation.md` |
+| `pipeline/features_data/`, `results_data/`, `models_data/` | Feature tables, out-of-fold ranked lists, trained models, per corpus |
+| `pipeline/RERANK_README.md` | Earlier runbook (written for the retired `data_sat` corpus); the cross-encoder notes still apply |
 
-## Quickstart (CUDA)
-
-```bash
-conda create -n fi-bench python=3.12 && conda activate fi-bench   # torch with CUDA
-pip install -r pipeline/requirements.txt
-pip install -r pipeline/requirements-rerank.txt   # sentence-transformers, xgboost, scikit-learn, rank-bm25
-
-python pipeline/run_pipeline.py --data-dir data_sat                       # Stage 1: BM25/dense/RRF
-python pipeline/features.py --data-dir data_sat --top-k 50
-python pipeline/rerank_crossencoder.py --mode score --data-dir data_sat --tag minilm   # zero-shot CE
-python pipeline/rerank_ltr.py --mode ablation --data-dir data_sat --top-k 50 --linear-gain \
-    --normalize-scores zscore --tag linz                                      # RRF → +LTR (recommended)
-python pipeline/fuse_rankers.py --data-dir data_sat --inputs linz noce --weights 0.7 0.3 \
-    --out fused_linz_noce.json                                                # → the shipped ranker
-```
-
-Fine-tune the cross-encoder (5-fold per-query CV, ~65 min on an RTX 3060 — completed for
-`data_sat`; the OOF scores are kept for measurement, but the CE is deliberately **not** a ranker
-feature, see Results):
+## Reproduce
 
 ```bash
-python pipeline/rerank_crossencoder.py --mode finetune --data-dir data_sat --cv-folds 5 --epochs 2 --tag cecv --quiet
-python pipeline/rerank_ltr.py --mode ablation --data-dir data_sat --ce-tag cecv
+pip install -r pipeline/requirements.txt -r pipeline/requirements-rerank.txt
+cd pipeline
+
+# Stage 1 + feature table (the tax corpus has the same text, so the same rankings)
+python run_pipeline.py --data-dir data/data_set_v5_tax
+python features.py     --data-dir data/data_set_v5_tax
+
+# labels: fold in the top-up grades (already merged in the committed files; a no-op then)
+python merge_topup_grades.py --data-dir data/data_set_v5_tax
+
+# tag features -- its own process: torch + xgboost in one process segfaults on macOS
+python tag_features.py --data-dir data/data_set_v5_tax
+
+# shipped ranker: out-of-fold lists -> results_data/data_set_v5_tax/v5tax_tags.json,
+# full-data model -> models_data/data_set_v5_tax/v5tax_tags_xgb.json
+python rerank_ltr.py --mode ablation --data-dir data/data_set_v5_tax --top-k 50 \
+    --linear-gain --normalize-scores zscore --tag-features --tag v5tax_tags
+
+# the significance test in the Results section
+python tag_ablation.py
 ```
 
-Every command above also runs against the archived synthetic corpus by omitting `--data-dir`
-(defaults to `data`).
+## Caveats
 
-## Results
-
-RRF top-50 → LambdaMART, evaluated out-of-fold (GroupKFold by query) against `data_sat`'s
-1,023 LLM-graded queries:
-
-| Stage | NDCG@10 | P@5 | R@5 | R@10 | MRR |
-|---|---|---|---|---|---|
-| RRF k=60 (Stage 1 baseline) | 0.671 | 0.116 | 0.531 | 0.774 | 0.278 |
-| + cross-encoder, zero-shot (`ms-marco-MiniLM-L6-v2`) | 0.365 | 0.064 | 0.291 | 0.407 | 0.183 |
-| + cross-encoder, fine-tuned (per-query 5-fold CV, out-of-fold) | 0.555 | 0.116 | 0.548 | 0.728 | 0.295 |
-| + LambdaMART, exponential gain (previously shipped) | 0.658 | **0.153** | **0.682** | 0.860 | 0.338 |
-| + LambdaMART with `ce_score` — trained, **rejected** | 0.633 | 0.154 | 0.705 | 0.854 | 0.363 |
-| + LambdaMART, **linear gain + per-query-normalised features** | **0.685** | 0.141 | 0.640 | 0.854 | 0.333 |
-| **Fused 0.7×new + 0.3×previous — the shipped ranker** | 0.684 | 0.146 | 0.657 | **0.858** | **0.341** |
-
-Paired bootstrap over the 1,023 queries (10k resamples) — **shipped ranker (fused) vs RRF**:
-
-| Metric | Δ | 95% CI | Verdict |
-|---|---|---|---|
-| NDCG@10 | **+0.0132** | [+0.0039, +0.0227] | improved |
-| P@5 | **+0.0305** | [+0.0246, +0.0366] | improved |
-| R@10 | **+0.0843** | [+0.0572, +0.1119] | improved |
-| MRR | **+0.0644** | [+0.0509, +0.0782] | improved |
-
-The shipped ranker now beats RRF on **all four** metrics. The previous ranker did not — it
-*regressed* on NDCG@10 (−0.0133, [−0.0230, −0.0035]).
-
-vs the **previous** ranker, the shipped model trades one metric for another, and the trade is
-explicit: NDCG@10 **+0.0265** [+0.0211, +0.0318] improved, P@5 **−0.0070** [−0.0111, −0.0029]
-worse, R@10 (0.0028) and MRR (+0.0038) unchanged. It buys the top-of-list quality that NDCG
-measures and gives back a little precision-at-5.
-
-**Two scoring bugs were found and fixed in this run** (both inherited, both now measured):
-
-1. **The training objective disagreed with the evaluation metric.** `rerank_ltr.py` trains
-   `rank:ndcg`, which by default uses *exponential* gain (2^label−1 → 0/1/3/7), while
-   `evaluate.py` scores NDCG with *linear* gain on the 0-100 scores (0/33/66/100). Exponential
-   gain makes grade-3 seven times grade-1; linear makes it three times — so the model was
-   optimising a different ranking than the one being reported. `--linear-gain` sets
-   `ndcg_exp_gain=False`: **NDCG@10 0.658 → 0.681** [+0.0206, +0.0336].
-2. **Feature scales drift per query.** `bm25_score`, `dense_cosine` and `rrf_score` have
-   query-dependent scales, and a tree splits on absolute values — so one threshold meant a
-   different thing for every gig. `--normalize-scores zscore` rescales them within each query:
-   a further **+0.006 to +0.010 NDCG@10**, significant in two independent harnesses.
-
-- **The cross-encoder is fine-tuned on `data_sat`** (per-query 5-fold `GroupKFold`, 2 epochs,
-  ~65 min on an RTX 3060, OOF scores only so it stays leak-free). It improves hugely over
-  zero-shot — **0.365 → 0.555 NDCG@10 (+0.190)** — but is still below RRF standalone.
-- **The CE stays out of the ranker even after the scaling fix.** Its raw logit has a per-query
-  mean spanning ~9 units, and its OOF scores come from 5 different fold models while the serving
-  model scores every query itself — a real train/serve skew worth fixing on principle. It was
-  fixed (`--ce-normalize zscore`/`rank`) and the CE still lost: best CE variant 0.641 vs 0.681
-  without it. The feature is genuinely redundant with BM25+dense here, not merely mis-scaled.
-  Weights are kept in `models_data_sat/ce-cecv/` for the semantic-score role.
-- **The fusion is the one place where two models beat either alone.** The linear-gain model and
-  the previous model are strong on different metrics; weighted RRF at w=0.7 keeps the whole
-  NDCG@10 gain while returning ~40% of the P@5 it would otherwise cost (P@5 +0.0049
-  [+0.0027, +0.0072] and MRR +0.0082 [+0.0040, +0.0126] vs the new model alone, at no measurable
-  NDCG loss). Reproduce with `pipeline/fuse_rankers.py --data-dir data_sat --inputs linz noce
-  --weights 0.7 0.3`.
-- **What did *not* help**, all measured and rejected: five new features from unused fields
-  (industry match, rate ratio, budget under/over split, capacity fit) — no effect; per-feature
-  *percentile* normalisation (0.671) and *rank* normalisation — worse than z-score; `rank:pairwise`
-  (0.651); deeper trees (0.678); 600 trees @ lr 0.03 (0.686) and a 3-seed ensemble (0.687) — both
-  within noise of 0.685; fusing the ranker with RRF — inconclusive.
-- **Adding new *signal* did not work either, and this closes the "more features" direction.**
-  A second encoder family (`BAAI/bge-small-en-v1.5`) cosine: −0.0005 NDCG@10, inconclusive
-  (P@5 −0.0031, worse). Field-level similarity — scoring each of the five provider fields against
-  the gig separately, plus max/mean/which-field — **−0.0204 NDCG@10 [−0.0268, −0.0141] and
-  −0.0267 R@10, both significantly worse**. Eleven near-duplicate text-similarity columns dilute
-  the strong signals rather than adding to them. Combined with the feature/hyperparameter/ensemble
-  results above, the 9-feature model is **saturated on text signal**: the remaining headroom
-  (oracle NDCG@10 0.983 vs 0.684 shipped) needs a *better relevance model*, not more similarity
-  columns — see the frontier note below.
-- **Metric frontier — you cannot maximise all four at once.** Measured, with CIs:
-
-  | To maximise | Configuration | NDCG@10 | P@5 | R@10 | MRR |
-  |---|---|---|---|---|---|
-  | **NDCG@10** | fused 0.70·`linz` + 0.30·`noce` | **0.684** | 0.146 | 0.858 | 0.341 |
-  | **R@10** | fused 0.50·`linz` + 0.20·`noce` + 0.30·`mapbin` | 0.650 | 0.158 | **0.891** | 0.354 |
-  | **P@5** | fused 0.40·`linz` + 0.30·`noce` + 0.30·`mapbin` | 0.648 | **0.159** | 0.885 | 0.354 |
-  | **MRR** | `mapbin` alone | 0.555 | 0.158 | 0.866 | **0.355** |
-
-  Adding the binary-relevance model (`mapbin`) to the fusion raises P@5/R@10/MRR but costs
-  NDCG@10 significantly (−0.007 to −0.037 depending on weight) — there is no weight that improves
-  both. The trade is monotone, so pick the metric you report and cite the matching row.
-- **One sharp trade-off worth knowing**: training on *binary* relevance (grade ≥2) with
-  `rank:map` optimises exactly what P@5/R@10/MRR measure and gives the **best P@5 (0.158) and MRR
-  (0.348) of anything tried**, but collapses NDCG@10 to 0.554. If the top-5 shortlist is what
-  matters rather than graded ordering, that model is the one to use.
-- **Zero-shot cross-encoder regresses hard** — confirmed out-of-domain for consulting/finance
-  text (0.365 vs 0.671), so its score is not used anywhere downstream.
-
-**Full write-up** — dataset stats, the fixes made to support real data (structured
-budget/seniority/availability fields, a date-parsing bug found and fixed during review), feature
-importances, worked examples, and caveats — is in `pipeline/RERANK_README.md`.
-
-## Honest caveats
-
-- **47% of gigs have no graded-≥2 provider _in their pool_.** 481/1,023 gigs have no provider
-  graded ≥2 among the ~22 pooled for that gig. Only ~1% of the 2,165-provider catalog is graded
-  for any given gig, so this is a **pool-coverage** statement, not a claim that the catalog lacks
-  a strong match.
-- **Recall is undefined for 47% of gigs.** `evaluate.recall_at_k` returns `None` when a gig has no
-  relevant item at all, so every R@5/R@10 in the table above is averaged over only the **542
-  answerable gigs**, not all 1,023. NDCG@10/P@5/MRR average over all 1,023.
-- **The noise bar is ~0.007 on this corpus, not 0.02.** `rerank_ltr.py`'s printed reminder was
-  calibrated for the *130-query synthetic* corpus; it is now dataset-aware and prints the correct
-  figure for whatever corpus it is pointed at. At 1,023 queries the standard error is ~2.8×
-  smaller than the synthetic corpus's, so deltas near 0.01 are real here — always quote the
-  bootstrap CIs.
-- **Grades cluster low.** 50.8% grade-0, 43.7% grade-1, 2.5% grade-2, 3.0% grade-3 (grader
-  `qwen3.8:27b`, `pipeline/label.md`) — only 5.5% of judged pairs are ≥2, so most of the top-10
-  for any query is "plausible, not excellent" by construction.
-- **Zero-shot cross-encoder is a net negative** on this domain, and the fine-tuned one is a
-  negative *as a ranker feature*. Both are measured, not assumed.
-- **`budget_fit` penalizes below-budget rates as harshly as above-budget ones** — a cheaper-than-
-  requested provider gets demoted the same as an over-budget one, which is a plausible source of
-  some of LambdaMART's query-level regressions (see the worked example in `RERANK_README.md`).
-  Not fixed in this run.
-- **Pre-existing, not `data_sat`-specific**: `retrieval_bm25.py`'s query-side title weighting
-  effectively 4×s the title instead of the documented 3× (a token-concatenation bug in
-  `BM25Retriever._query_tokens`). Affects every BM25/RRF run in this repo. Flagged in
-  `RERANK_README.md`, not fixed, since fixing it changes results for both datasets.
-- **The fold split is fixed, not averaged.** Every number above comes from one 5-fold query
-  split (`--seed 7`), so the *mean* is single-split; the CIs resample queries within that split.
-  Re-running with a different split moves NDCG@10 by roughly ±0.008 — treat effects smaller than
-  that as unproven until they replicate across splits.
-- Model weights and embedding/results caches are git-ignored (regenerable, and large at this
-  corpus scale); rebuild with the quickstart commands.
-- An archived synthetic-data baseline and a Matryoshka-aware dense-encoder fine-tune validated
-  against it are preserved in `pipeline/data/`, `results/`, `features/`, `models/` and
-  `pipeline/finetune_embeddings.py` for reference — not documented here; see git history for
-  their numbers and methodology.
+- **The top-up grades were chosen by the tag rankers.** They cover every ungraded pair in the
+  tag variants' top-10s (on the original fold split), so they cannot favour the baseline — but
+  on other fold splits a few ungraded pairs remain (top-10 still ~99% graded). Training on the
+  top-up as well changes what the 9-feature baseline learns and pulls ungraded providers into
+  its top-10 (94% graded), so that comparison is reported in `tag_ablation.py` but not used
+  for the headline.
+- **The labels are LLM grades, not hirer outcomes.** One model (`qwen3.8:27b`) at temperature 0,
+  on text only — the grader never saw the tags, so the tags cannot be "agreeing with
+  themselves".
+- **Numbers before this change are on the original 21,696 labels.** The new grades raise the
+  ideal DCG for gigs where they found strong providers, so every system's NDCG@10 drops a
+  little on the larger label set (RRF 0.8861 → 0.8757). Compare rows only within one label set.
+- **The remaining ~1% ungraded top-10 slots cannot flip the result**: scoring every ungraded
+  provider in the baseline's top-10 as grade 3, and every one only in the tag ranker's as
+  grade 0, still gives the tags +0.0122 NDCG@10 [+0.0080, +0.0165].
+- **Pre-existing, unchanged: the BM25 query counts the gig title 4×, not the documented 3×**
+  (`hirer_text()` already contains the title, and `hirer_bm25_tokens()` adds it 3× more). It
+  applies to every system equally; fixing it would change every Stage-1 number, so it is left
+  as is and flagged here.
+- **`budget_fit`, `seniority_fit`, `avail_immediacy` are dead on v5** (the schema carries none of
+  their inputs) and score 0 importance (so does `exp_years`, which `features.py` writes but no model reads). They are
+  kept so the feature contract stays stable.
+- **Untagged records**: 87 gigs and 252 providers have no tags; `has_tags_*` lets the model tell
+  "untagged" from "mismatched", and those records fall back to retrieval-only ordering.
+- Stage-1 ranked lists, the embedding cache and the skill-vector cache are git-ignored and
+  regenerate from the commands above.

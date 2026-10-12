@@ -169,7 +169,7 @@ def main():
         (RESULTS_DIR / f"rrf_w_sw{sw}_dw{dw}.json").write_text(json.dumps(rrf_results, indent=2))
         print(f"  rrf[sparse_weight={sw}, dense_weight={dw}] written")
 
-    print("\nAll results written to pipeline/results/")
+    print(f"\nAll results written to {RESULTS_DIR.relative_to(BASE.parent)}/")
 
 
 if __name__ == "__main__":

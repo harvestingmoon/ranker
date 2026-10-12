@@ -1,9 +1,17 @@
 # Ablation — Stage-1 retrieval and Stage-2 re-ranking
 
 **Corpus:** `pipeline/data/data_set_v5` — 1,106 gig queries, 3,024 provider showcases,
-**21,696 LLM-graded pairs**, graded 0–3 by `qwen3.8:27b` on prompt `rubric_0_3.v5`
+**21,696 LLM-graded pairs**, graded 0–3 by `qwen3.8:27b` on prompt `rubric_01.v5`
 (0: 28.1% · 1: 10.5% · 2: 44.6% · 3: 16.9%). Relevance for P/R/MRR is **grade ≥ 2**,
 so **61.5%** of judged pairs are relevant, median **13** relevant per query.
+
+> **Update — §5 supersedes the shipped configuration and finding 5.** Re-grading the pairs
+> the tag rankers surfaced showed the "+ taxonomy features" regression in §1–§2 was an
+> artefact of ungraded candidates being scored as grade 0. With them graded, LambdaMART +
+> SkillsFuture tag features beats the 9-feature model by **+0.0188 NDCG@10
+> [+0.0145, +0.0231]** and is now shipped. §1–§4 are kept as they were measured: on the
+> original 21,696 labels, which the committed label files no longer equal (they now include
+> the 2,374 top-up grades, so re-running `final_ablation.py` scores against the larger set).
 
 Reproduce with:
 
@@ -38,7 +46,7 @@ the noise floor at n=1,106 is ≈ **0.007**.
 | Stage 1 + taxonomy recall (w=0.3) | 0.9584 | **0.8859** | 0.7883 | 0.6794 | 0.8756 | **0.9749** |
 | *ORACLE (ceiling)* | *0.9991* | *0.9856* | *0.9365* | *0.8081* | *1.0000* | *0.9991* |
 
-**Shipped configuration: row 6** — refined BM25 ⊕ dense → RRF(k=60) → LambdaMART,
+**Shipped configuration at the time: row 6** (superseded by §5) — refined BM25 ⊕ dense → RRF(k=60) → LambdaMART,
 9 features, `rank:ndcg` with linear gain and per-query z-score normalisation.
 It is the best NDCG@10 and every alternative is either a significant regression or a
 non-significant trade.
@@ -108,7 +116,8 @@ largest tied group per query: median 660
 ranks 1…660 and industry-matched noise floods the top-10. Cosine similarity would not
 fix this — 2,772 providers share 36 vectors, so the ties survive.
 
-**5. The full SkillsFuture tree was recovered and still did not help.** v5 dropped the
+**5. The full SkillsFuture tree was recovered and still did not help** — *overturned in §5:
+the regression was an evaluation artefact.* v5 dropped the
 taxonomy, but the `mcjuh/BT4103-Scrape-and-Tag` records carry the complete `sf_v1`
 tree at 100% coverage and join to v5 by `source_file` with zero loss (1,106/1,106 gigs,
 3,024/3,024 providers). `enrich_v5_with_tags.py` grafts it on, giving 33/37 categories,
@@ -138,7 +147,7 @@ but they carry no information on this corpus.
 
 ---
 
-## 4. Caveats
+## 4. Caveats (§1–§3)
 
 - **Out-of-fold only.** The served model is trained on all queries
   (`models_data/data_set_v5/v5_lin_xgb.json`); the reported numbers come from OOF
@@ -152,3 +161,88 @@ but they carry no information on this corpus.
 - The recall-fusion rows were rebuilt from saved ranked lists, which is valid because
   RRF consumes **ranks only**. The 2-channel rebuild was asserted to reproduce the
   saved `rrf_k60.json` exactly before any 3-channel delta was reported.
+
+---
+
+## 5. Tag features, re-evaluated with the ungraded pairs graded (shipped)
+
+**What went wrong in §1–§2.** The judging pool came from the text retrievers' top results (RRF, BM25,
+dense) plus a few randoms per gig, so beyond RRF rank 10 most candidates were never
+graded: 40% of ranks 11–20, 14% of 21–30, 5% of 31–50. `evaluate.py` scores an ungraded pair
+as grade 0. A feature that promotes providers the text retrievers ranked low is therefore
+penalised whether or not those providers are good — and that is exactly what tag features do.
+The 15-feature taxonomy ranker's top-10 was only **87.4% graded** (the 9-feature model's:
+98.7%). Dropping ungraded pairs from both lists instead flipped the sign (0.9079 vs 0.8923).
+
+**Evidence the tags carry real signal** (top-50 pool, graded pairs only, Spearman with the grade
+after removing log RRF rank within each gig): match level +0.245, specialisation coverage
++0.216, skill overlap +0.21, category +0.20, industry +0.19, "same category, different
+specialisation" −0.03. The share graded ≥ 2 by match level (none / category / specialisation /
+specialisation + skill) is monotone in every rank band, e.g. ranks 31–50: 27% / 37% / 52% / 74%.
+
+**The top-up.** Every ungraded pair in the top-10 of any tag variant (out-of-fold, split 0) —
+**2,383 pairs** — was graded with the original grader (`qwen3.8:27b`, `rubric_01.v5`,
+temperature 0, via the Scrape-and-Tag repo's `labeller/grade_pairs.py`). A calibration re-grade
+of 60 already-graded pairs (15 per grade) reproduced **60/60** exactly. 2,374 were graded
+(9 failed: the model answered in prose or with a bare score, deterministically):
+0: 427 · 1: 346 · 2: 1,420 · 3: 181 — **67% relevant**, against 61.5% for the original pool.
+Stored in `data/data_set_v5/judgments_topup_tags.jsonl`; `merge_topup_grades.py` merges them.
+
+**Features** (`tag_features.py`): `tag_level` (0 none · 1 category · 2 specialisation ·
+3 specialisation + skill), `has_tags_gig`, `has_tags_prov`, `cat_any`, `spec_cov`, `skill_cov`,
+`skill_idf_cov` (rarity-weighted), `skill_soft` (mean best cosine between skill names,
+mxbai-embed-large). Category/specialisation are matched exactly (closed vocabularies of 37 /
+144). Industry is excluded — a provider's industry is always one of its tag categories, and the
+two agree on 89% of candidate pairs.
+
+**Protocol** (`tag_ablation.py`): train on the original 21,696 labels, evaluate on all 24,070.
+Out-of-fold over three fold splits (GroupKFold + two shuffled KFolds). Both systems' top-10s
+are ≥ 99% graded.
+
+| system (trained on original labels) | NDCG@10 | NDCG@5 | P@5 | P@10 | R@10 | MRR | top-10 graded |
+|---|---|---|---|---|---|---|---|
+| RRF k=60 | 0.8757 | 0.8817 | 0.8745 | 0.8039 | 0.6197 | 0.9698 | 99.9% |
+| LambdaMART, 9 feat | 0.8768 | 0.8842 | 0.8751 | 0.8042 | 0.6223 | 0.9705 | 99.1% |
+| **LambdaMART + 8 tag features** | **0.8927** | **0.9000** | **0.8966** | **0.8245** | **0.6409** | **0.9782** | 99.0% |
+
+*(mean over the three splits)*
+
+| tags vs 9-feat (split 0) | Δ | 95% CI | per split |
+|---|---|---|---|
+| NDCG@10 | **+0.0188** | [+0.0145, +0.0231] | +0.0188 / +0.0169 / +0.0119 |
+| NDCG@5 | **+0.0162** | [+0.0115, +0.0208] | +0.0162 / +0.0149 / +0.0164 |
+| P@5 | **+0.0217** | [+0.0150, +0.0286] | +0.0217 / +0.0193 / +0.0235 |
+| P@10 | **+0.0251** | [+0.0190, +0.0315] | +0.0251 / +0.0208 / +0.0151 |
+| R@10 | **+0.0215** | [+0.0153, +0.0278] | +0.0215 / +0.0200 / +0.0145 |
+| MRR | +0.0055 | [−0.0001, +0.0115] | +0.0055 / +0.0090 / +0.0086 |
+
+**Variants tried** (exploration harness, same protocol, split 0, NDCG@10 on all labels):
+`tag_level` alone 0.8951 · exact-match features only 0.8965 · **exact + `skill_soft` 0.8969
+(shipped)** · with monotone constraints 0.8949 · `tag_level` + `skill_soft` monotone 0.8947.
+`tag_level` alone carries most of the gain; `skill_soft` adds a small, consistent P@5 lift
+(+0.006 over exact-only); monotone constraints do not help.
+
+**Shipped model**: the 17-feature ranker retrained on all 24,070 labels —
+`rerank_ltr.py --data-dir data/data_set_v5_tax --linear-gain --normalize-scores zscore
+--tag-features --tag v5tax_tags`, out-of-fold NDCG@10 **0.8982**, P@5 0.8991, MRR 0.9774
+(`results_data/data_set_v5_tax/v5tax_tags.json`, model `models_data/data_set_v5_tax/v5tax_tags_xgb.json`).
+Importance: `rrf_rank` 0.33, `rrf_score` 0.24, `tag_level` 0.07, then `bm25_score`,
+`dense_cosine`, `skill_cov`, `spec_cov`, `skill_soft` (0.04–0.06 each); tag features 28% in total.
+
+**Caveats.**
+- The top-up was chosen from the tag rankers' split-0 top-10s, so it cannot favour the
+  baseline. On the other two splits a few ungraded pairs remain in the tag ranker's top-10
+  (99.0% graded on average), which, if anything, understates the tags there.
+- **Worst case for the remaining ungraded slots** (split 0): 97 slots in the baseline's
+  top-10s and 30 only in the tag ranker's are still ungraded. Scoring every baseline one as
+  grade 3 and every tag-only one as grade 0 still leaves the tags ahead:
+  **+0.0122 NDCG@10 [+0.0080, +0.0165]** (baseline 0.8800, tags 0.8922).
+- Retraining the 9-feature model on the top-up as well is *not* a fair baseline: the top-up is
+  mostly relevant providers at low RRF ranks, so that model learns to promote low-ranked
+  candidates generally and its top-10 falls to 94% graded (NDCG@10 0.8583). `tag_ablation.py`
+  prints it for completeness.
+- All NDCG values in this section are on the 24,070-pair label set. The added grades raise the
+  ideal DCG of the gigs where they found strong providers, so RRF reads 0.8757 here vs 0.8861
+  in §1. Do not compare across the two label sets.
+- The grader saw only the text, never the tags, so the tag features are not being scored by
+  a judge that read them.

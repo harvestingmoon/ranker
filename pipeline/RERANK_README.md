@@ -1,5 +1,10 @@
 # Stage-2 Re-ranking — cross-encoder + LambdaMART (runbook)
 
+> **Historical.** This runbook was written for the retired `data_sat` corpus and its numbers
+> are from that corpus. The current corpus (`data_set_v5`), the shipped ranker (LambdaMART +
+> SkillsFuture tag features) and its results are in the top-level `README.md` and
+> `ablation.md` §5. The cross-encoder findings below still hold (rejected again on v5).
+
 Search-engine shape: **retrieve wide (Stage 1, already built) → rank narrow (Stage 2, this).**
 
 ```

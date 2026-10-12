@@ -35,6 +35,7 @@ import xgboost as xgb
 from sklearn.model_selection import GroupKFold
 
 from evaluate import evaluate_all_hirers
+from tag_features import TAG_FEATURES
 from taxonomy import TAXONOMY_FEATURES
 
 BASE = Path(__file__).parent
@@ -164,7 +165,7 @@ def load_json(p):
 
 
 def load_candidates(top_k: int, ce_tag: str | None, ce_normalize: str = "none",
-                    taxonomy: bool = False):
+                    taxonomy: bool = False, tag_features: bool = False):
     path = FEAT_DIR / f"candidates_top{top_k}.csv"
     if not path.exists():
         raise SystemExit(f"{path} not found -- run `python pipeline/features.py --top-k {top_k}` first")
@@ -212,6 +213,25 @@ def load_candidates(top_k: int, ce_tag: str | None, ce_normalize: str = "none",
         print(f"  taxonomy features merged ({len(TAXONOMY_FEATURES)} cols); "
               f"{unmatched} candidate rows had no tag overlap (filled 0.0)")
         features.extend(TAXONOMY_FEATURES)
+
+    if tag_features:
+        # SkillsFuture tag-match features (tag_features.py). Built in a separate process:
+        # it loads torch, which segfaults alongside xgboost on macOS.
+        tf_path = FEAT_DIR / "tag_features.csv"
+        if not tf_path.exists():
+            raise SystemExit(f"{tf_path} not found -- build it with "
+                             f"`python pipeline/tag_features.py --data-dir {DATA_DIR.relative_to(BASE)}`")
+        tf = {(r["hire_id"], r["provider_id"]): r for r in csv.DictReader(tf_path.open())}
+        missing = [r for r in rows if (r["hire_id"], r["provider_id"]) not in tf]
+        if missing:
+            raise SystemExit(f"{tf_path.name} is stale: {len(missing)} candidate rows have no tag "
+                             f"features -- rebuild it after features.py")
+        for r in rows:
+            src = tf[(r["hire_id"], r["provider_id"])]
+            for f in TAG_FEATURES:
+                r[f] = src[f]
+        print(f"  tag features merged ({len(TAG_FEATURES)} cols): {TAG_FEATURES}")
+        features.extend(TAG_FEATURES)
 
     for r in rows:
         for f in features:
@@ -300,6 +320,9 @@ def main():
     ap.add_argument("--taxonomy", action="store_true",
                     help="include the taxonomy recall channel's match scores (Card 3) from "
                          "features_<dataset>/taxonomy_scores.csv")
+    ap.add_argument("--tag-features", action="store_true",
+                    help="add the SkillsFuture tag-match features from features_<dataset>/tag_features.csv "
+                         "(build with tag_features.py). Shipped configuration on data_set_v5_tax")
     ap.add_argument("--ce-normalize", default="none", choices=["none", "zscore", "rank"],
                     help="rescale ce_score within each query. The raw logit's per-query mean "
                          "spans ~9 units, and OOF scores come from 5 fold models while serving "
@@ -362,7 +385,8 @@ def main():
     rrf_full = load_json(_rrf_path) if _rrf_path.exists() else {}
     gt = load_json(DATA_DIR / "ground_truth_llm.json")
 
-    rows, features = load_candidates(args.top_k, args.ce_tag, args.ce_normalize, args.taxonomy)
+    rows, features = load_candidates(args.top_k, args.ce_tag, args.ce_normalize, args.taxonomy,
+                                     args.tag_features)
 
     # Fail loudly rather than silently training on an empty target. Grades must key on
     # the SAME ids the corpus uses -- for the v2 corpus that is `hirer_ref` and the
