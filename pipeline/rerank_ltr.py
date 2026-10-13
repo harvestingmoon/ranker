@@ -95,6 +95,13 @@ DEFAULT_FEATURES = ["bm25_score", "bm25_rank", "dense_cosine", "dense_rank",
 SCORE_FEATURES = ["bm25_score", "dense_cosine", "rrf_score",
                   "budget_fit", "seniority_fit", "avail_immediacy"]
 
+# Field-split BM25 columns from `bm25_fields.py`: each is an Okapi score against
+# ONE provider section rather than the blended whole, so the model can tell WHERE
+# a term matched instead of only how much. Raw scale drifts per query for the
+# same reason bm25_score's does, so these join SCORE_FEATURES for normalisation.
+BM25_FIELD_FEATURES = ["bm25_title_title", "bm25_desc_about", "bm25_desc_services",
+                       "bm25_desc_exp", "bm25_field_max", "bm25_field_gap"]
+
 
 def normalize_by_query(rows, keys, how):
     """Rescale feature(s) WITHIN each query.
@@ -165,7 +172,8 @@ def load_json(p):
 
 
 def load_candidates(top_k: int, ce_tag: str | None, ce_normalize: str = "none",
-                    taxonomy: bool = False, tag_features: bool = False):
+                    taxonomy: bool = False, tag_features: bool = False,
+                    bm25_fields: bool = False):
     path = FEAT_DIR / f"candidates_top{top_k}.csv"
     if not path.exists():
         raise SystemExit(f"{path} not found -- run `python pipeline/features.py --top-k {top_k}` first")
@@ -191,6 +199,28 @@ def load_candidates(top_k: int, ce_tag: str | None, ce_normalize: str = "none",
             normalize_by_query(rows, "ce_score", ce_normalize)
             print(f"  ce_score normalised per query: {ce_normalize}")
         features.append("ce_score")
+
+    if bm25_fields:
+        # A missing row here is a REAL zero (the pair simply is not in the
+        # top-k pool the field scores were computed for), not an unavailable
+        # score -- same distinction the taxonomy merge makes.
+        bf_path = FEAT_DIR / "bm25_fields.csv"
+        if not bf_path.exists():
+            raise SystemExit(f"{bf_path} not found -- run `python pipeline/bm25_fields.py "
+                             f"--data-dir {DATA_DIR} --tag {DATA_DIR.name}`")
+        bf = {(r["hire_id"], r["provider_id"]): [float(r[c]) for c in BM25_FIELD_FEATURES]
+              for r in csv.DictReader(bf_path.open())}
+        unmatched = 0
+        for r in rows:
+            vals = bf.get((str(r["hire_id"]), str(r["provider_id"])))
+            if vals is None:
+                vals = [0.0] * len(BM25_FIELD_FEATURES)
+                unmatched += 1
+            for c, v in zip(BM25_FIELD_FEATURES, vals):
+                r[c] = v
+        if unmatched:
+            print(f"  note: {unmatched} candidate rows had no field-BM25 score (filled 0.0)")
+        features.extend(BM25_FIELD_FEATURES)
 
     if taxonomy:
         # Card 3's "Recall Channel Matching Scores", third channel. Unlike the
@@ -317,6 +347,10 @@ def main():
     ap.add_argument("--mode", choices=["train", "ablation"], default="ablation")
     ap.add_argument("--top-k", type=int, default=50)
     ap.add_argument("--ce-tag", default=None, help="include features/ce_scores_<tag>.csv as a feature")
+    ap.add_argument("--bm25-fields", action="store_true",
+                    help="include features/bm25_fields.csv (per-section BM25) as features")
+    ap.add_argument("--drop-features", default=None,
+                    help="comma-separated feature names to drop (ablation), e.g. rrf_rank,rrf_score")
     ap.add_argument("--taxonomy", action="store_true",
                     help="include the taxonomy recall channel's match scores (Card 3) from "
                          "features_<dataset>/taxonomy_scores.csv")
@@ -386,7 +420,15 @@ def main():
     gt = load_json(DATA_DIR / "ground_truth_llm.json")
 
     rows, features = load_candidates(args.top_k, args.ce_tag, args.ce_normalize, args.taxonomy,
-                                     args.tag_features)
+                                     args.tag_features, args.bm25_fields)
+
+    if args.drop_features:
+        _drop = {f.strip() for f in args.drop_features.split(",") if f.strip()}
+        unknown = _drop - set(features)
+        if unknown:
+            raise SystemExit(f"--drop-features names not in the feature set: {sorted(unknown)}")
+        features = [f for f in features if f not in _drop]
+        print(f"dropped features: {sorted(_drop)}  -> {len(features)} remain")
 
     # Fail loudly rather than silently training on an empty target. Grades must key on
     # the SAME ids the corpus uses -- for the v2 corpus that is `hirer_ref` and the
@@ -412,7 +454,8 @@ def main():
         )
 
     if args.normalize_scores != "none":
-        normalize_by_query(rows, SCORE_FEATURES, args.normalize_scores)
+        normalize_by_query(rows, SCORE_FEATURES + (BM25_FIELD_FEATURES if args.bm25_fields else []),
+                           args.normalize_scores)
         print(f"score features normalised per query: {args.normalize_scores}")
     print(f"loaded {len(rows)} candidate rows / {len({r['hire_id'] for r in rows})} queries")
     print(f"features ({len(features)}): {features}\n")
