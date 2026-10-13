@@ -2,7 +2,8 @@
 
 Given a gig (a hirer's request), return the providers best suited to do it. Stage 1 retrieves
 candidates with two text retrievers fused by RRF; Stage 2 re-orders the top 50 with a LambdaMART
-ranker that combines the retrieval scores with **SkillsFuture tag-match features**.
+ranker that combines the retrieval scores with **SkillsFuture tag-match features**; Stage 2b fuses
+several rankers with weighted RRF (current best: **0.9121 NDCG@10** — see Results).
 
 The corpus is **`pipeline/data/data_set_v5`** — 1,106 gigs × 3,024 provider showcases, with
 **24,070 LLM-graded pairs** (0–3, `qwen3.8:27b`, prompt `rubric_01.v5`). The ranker reads the
@@ -15,6 +16,7 @@ gig ─► [refined BM25 ‖ mxbai dense (1024-d)] ─► RRF (k=60) ─► top-
          retrieval   bm25 / dense / rrf  scores and ranks (scores z-scored per gig)
          tags        tag_level, spec / skill coverage, rarity-weighted skill coverage,
                      soft skill similarity, category match, has-tags flags
+    ─► weighted-RRF fusion of base / Tier-1 / cross-encoder lists (Stage 2b — current best)
     ─► ranked providers (+ 0–100 score)
 ```
 
@@ -44,6 +46,52 @@ Tags vs previous, both trained on the original labels, paired bootstrap (10k res
 | MRR | +0.0055 | [−0.0001, +0.0115] | crosses 0 |
 
 Full write-up, including the earlier rejected variants: [`ablation.md`](ablation.md).
+
+### Tier-1 features + rank fusion — new best (cross-encoder kept as an ensemble input)
+
+On top of the shipped 17 features, `tier1_rank.py` adds three feature families and a
+rank-fusion stage, under the identical OOF protocol (GroupKFold by query, linear gain,
+per-query z-scored score features):
+
+- **Taxonomy-graph partial credit** — a gig skill the provider does not hold exactly can
+  still be *reached* through the `sf_v1` tree: a *sibling* skill under the same
+  specialisation, or any provider skill under the same category. Adds `skill_sib_cov`,
+  `skill_cat_cov`, `graph_dist_mean/min`, `spec_cat_cov`, `skill_jaccard`.
+- **Interaction crosses** — `tl_x_rank`, `speccov_x_tl`, `skillcov_x_tl`.
+- **Provider-prior quality** — leave-one-query-out, α-smoothed mean grade of a provider,
+  **rebuilt per fold from that fold's training queries only** (no leakage).
+- **Rank fusion** — weighted RRF over the rankers' OOF lists (`fuse_rankers.py`'s recipe).
+
+| System (all OOF, all 1,106 queries, graded labels) | NDCG@10 | NDCG@5 | P@5 | P@10 | R@5 | R@10 | MRR |
+|---|---|---|---|---|---|---|---|
+| Stage 2 — LambdaMART + tag features (previous shipped) | 0.8982 | 0.9018 | 0.8991 | 0.8304 | 0.3638 | 0.6449 | 0.9774 |
+| + 11 Tier-1 features (28 feat, alone) | 0.8913 | 0.9127 | 0.9085 | 0.8162 | 0.3692 | 0.6360 | 0.9844 |
+| RRF-fuse base + Tier-1 (0.6 / 0.4) | 0.9039 | 0.9095 | 0.9069 | 0.8357 | 0.3678 | 0.6511 | 0.9811 |
+| **RRF-fuse base + Tier-1 + cross-encoder (0.4 / 0.4 / 0.2)** | **0.9121** | **0.9243** | **0.9226** | **0.8429** | **0.3762** | **0.6587** | **0.9878** |
+
+Paired bootstrap vs the previous shipped ranker (10k resamples over queries):
+
+| Metric | Δ (fusion − shipped) | 95% CI | Verdict |
+|---|---|---|---|
+| NDCG@10 | **+0.0139** | [+0.0109, +0.0170] | better |
+| NDCG@5 | +0.0225 | [+0.0187, +0.0263] | better |
+| P@5 | **+0.0235** | [+0.0179, +0.0293] | better |
+| P@10 | +0.0125 | [+0.0080, +0.0169] | better |
+| R@5 | +0.0123 | [+0.0087, +0.0161] | better |
+| R@10 | **+0.0138** | [+0.0096, +0.0180] | better |
+| MRR | +0.0104 | [+0.0057, +0.0153] | better |
+
+Every metric improves with a CI excluding 0, and the NDCG@10 gain is ~2× the 0.007 noise
+floor. Caveat: the fusion weights were chosen on the same OOF split (a mild selection);
+the direction is robust — every weight in 0.30–0.50 beats the baseline.
+
+**The cross-encoder: still rejected as a ranker, now kept as an ensemble input.**
+Fine-tuned under per-query OOF CV (`rerank_crossencoder.py`), `ms-marco-MiniLM-L6-v2`
+reaches NDCG@10 **0.7706** (zero-shot 0.6165) — far below the ranker, and folding
+`ce_score` in as a LambdaMART *feature* costs **−0.082 NDCG@10** (0.8781 → 0.7966) while
+buying +0.011 MRR. But its errors decorrelate from the GBDT's, so as **one input to the
+RRF fusion** it adds **+0.008 NDCG@10** and **+0.007 MRR** over the fusion without it.
+Use it in the ensemble, not as the ranker.
 
 ### Why the tags help, and why an earlier test said they didn't
 
@@ -76,6 +124,8 @@ Full write-up, including the earlier rejected variants: [`ablation.md`](ablation
 | `pipeline/features.py` | Builds `features_data/<corpus>/candidates_top50.csv` (top-50 pool + retrieval features + labels) |
 | `pipeline/tag_features.py` | Builds `tag_features.csv`, the 8 tag-match features. Run in its own process (torch) |
 | `pipeline/rerank_ltr.py` | LambdaMART (XGBoost `rank:ndcg`). Shipped flags: `--linear-gain --normalize-scores zscore --tag-features` |
+| `pipeline/tier1_rank.py` | Tier-1 features (taxonomy-graph partial credit, interaction crosses, fold-aware provider prior) + weighted-RRF rank fusion — the 0.9121 NDCG@10 configuration |
+| `pipeline/rerank_crossencoder.py`, `compare_ce_xgb.py` | Cross-encoder zero-shot / OOF fine-tune, and the paired-bootstrap comparison harness (`--max-length` caps the tokenizer for the bge/gte rerankers) |
 | `pipeline/tag_ablation.py` | The tags-vs-no-tags comparison above, train-on-original / evaluate-on-all |
 | `pipeline/merge_topup_grades.py` | Folds the top-up grades into a corpus's label files (idempotent) |
 | `pipeline/evaluate.py` | P@K / R@K / NDCG@K / MRR (linear gain; relevant = score ≥ 40 ⇔ grade ≥ 2) |
@@ -108,6 +158,16 @@ python rerank_ltr.py --mode ablation --data-dir data/data_set_v5_tax --top-k 50 
 python tag_ablation.py
 ```
 
+Tier-1 features + rank fusion (the 0.9121 NDCG@10 configuration) reproduce with:
+
+```bash
+cd pipeline
+python tier1_rank.py --data-dir data/data_set_v5_tax
+# cross-encoder OOF scores used by the 3-way fusion (median ~10 min on an H100)
+python rerank_crossencoder.py --mode finetune --data-dir data/data_set_v5 \
+    --model cross-encoder/ms-marco-MiniLM-L6-v2 --tag v5ce_minilm --epochs 3 --cv-folds 5
+```
+
 ## Caveats
 
 - **The top-up grades were chosen by the tag rankers.** They cover every ungraded pair in the
@@ -134,5 +194,13 @@ python tag_ablation.py
   kept so the feature contract stays stable.
 - **Untagged records**: 87 gigs and 252 providers have no tags; `has_tags_*` lets the model tell
   "untagged" from "mismatched", and those records fall back to retrieval-only ordering.
+- **Tier-1 fusion weights (0.4 / 0.4 / 0.2) are selected on the OOF split**, so the headline is
+  mildly optimistic; every weight in 0.30–0.50 beats the previous shipped ranker, and the
+  components are individually no better than it (`tier1_model` alone is 0.8913). The fusion's
+  inputs are re-trained models, **not** the shipped `v5tax_tags` artifact — adding that artifact
+  as a fourth input changes nothing (0.9121 → 0.9126), so the result is not circular.
+- **The cross-encoder has `--max-length`** (default: the model's own, which is 8192 for the
+  bge/gte rerankers and wasteful here). Pairs run to ~764 tokens (p90 595), so 768 is the
+  practical cap.
 - Stage-1 ranked lists, the embedding cache and the skill-vector cache are git-ignored and
   regenerate from the commands above.

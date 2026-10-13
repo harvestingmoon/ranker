@@ -124,7 +124,7 @@ def score(args):
 
     device = pick_device(args.device)
     print(f"Loading cross-encoder {args.model} ...")
-    ce = CrossEncoder(args.model, num_labels=1, device=device)
+    ce = CrossEncoder(args.model, num_labels=1, device=device, max_length=args.max_length)
     if args.fp16 and device == "cuda":
         ce.model.half()
         print("  fp16 enabled")
@@ -179,7 +179,7 @@ def make_examples(rows, train_q, providers_by_id, hirers_by_id, positive_grade):
 
 def _fit_ce(args, examples, device):
     """Fresh cross-encoder fitted on `examples`; raises if the scores go non-finite."""
-    ce = CrossEncoder(args.model, num_labels=1, device=device)
+    ce = CrossEncoder(args.model, num_labels=1, device=device, max_length=args.max_length)
     if args.fp16 and device == "cuda":
         ce.model.half()
     loader = DataLoader(examples, shuffle=True, batch_size=args.batch_size)
@@ -235,7 +235,7 @@ def finetune(args):
           f"positive grade: >= {args.positive_grade}")
 
     # ---- zero-shot reference over the SAME candidate universe (no training) ----
-    base_ce = CrossEncoder(args.model, num_labels=1, device=device)
+    base_ce = CrossEncoder(args.model, num_labels=1, device=device, max_length=args.max_length)
     pairs_all, meta_all = build_pairs(cand_rows, providers_by_id, hirers_by_id)
     zs_all = np.asarray(base_ce.predict(pairs_all, batch_size=args.batch_size,
                                        show_progress_bar=False)).reshape(-1)
@@ -333,6 +333,9 @@ def main():
     ap.add_argument("--cv-folds", type=int, default=5,
                     help="per-query folds; the written ce_scores_<tag>.csv is out-of-fold")
     ap.add_argument("--positive-grade", type=int, default=3, help="grade >= this counts as a positive")
+    ap.add_argument("--max-length", type=int, default=None,
+                    help="tokenizer max length for (query, doc) pairs; None uses the model default "
+                         "(8192 for bge/gte rerankers -- always cap it for these corpora)")
     ap.add_argument("--quiet", action="store_true", help="suppress the training progress bars")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--data-dir", default="data",
