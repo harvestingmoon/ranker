@@ -61,9 +61,10 @@
   \sub{both ranked lists merged}};
 
 \node[card=rankC] (s3) at (25mm,-36mm) {%
-  {\color{rankC}\bfseries 3\quad Re-rank top 50}\\[4pt]
-  \footnotesize A model weighs both scores, and
-  whether the skills match the gig.\\[6pt]
+  {\color{rankC}\bfseries 3\quad Re-rank}\\[4pt]
+  \footnotesize Providers are scored\\
+  by several models,\\
+  then combined.\\[6pt]
   \sub{learned from past gigs}};
 
 \node[card=outC] (s4) at (75mm,-36mm) {%
@@ -80,9 +81,9 @@
 
 % ---------------- evidence tiles: equal width, centred on the spine ----------------
 % 4 x 41mm + 3 x 4mm = 176mm, so the row starts at -88mm and t1's CENTRE is at -67.5mm.
-\node[tile, anchor=north] (t1) at (-67.5mm,-70mm) {\bfseries 0.90\quad NDCG@10};
-\node[tile, right=4mm of t1] (t2) {\bfseries 0.90\quad P@5};
-\node[tile, right=4mm of t2] (t3) {\bfseries 0.98\quad MRR};
+\node[tile, anchor=north] (t1) at (-67.5mm,-70mm) {\bfseries 0.91\quad NDCG@10};
+\node[tile, right=4mm of t1] (t2) {\bfseries 0.92\quad P@5};
+\node[tile, right=4mm of t2] (t3) {\bfseries 0.99\quad MRR};
 \node[tile, right=4mm of t3] (t4) {\bfseries 24{,}070\quad judged matches};
 
 \coordinate (rowC) at ($(t2.south)!0.5!(t3.south)$);
