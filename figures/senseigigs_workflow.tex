@@ -1,20 +1,23 @@
 % Senseigigs — system workflow figure, research-paper style.
 % Compile: pdflatex -interaction=nonstopmode senseigigs_workflow.tex
 %
+% SCOPE: this figure shows ONLY the ~0.89 NDCG design — two stages, retrieval then
+% LambdaMART re-ranking. The tier-1 ensemble, the cross-encoder and the weighted
+% fusion are deliberately NOT drawn; they belong to the 0.91 variant.
+%
 % WHY THIS IS NOT "A ROW OF BOXES": concrete data is drawn at every hop — the real
 % gig text, real provider-id pills for each ranked list, a real feature vector for
-% one example pair, real scored output rows — and every stage is a named container
-% with its sub-modules visible.
+% one example pair, real scored output rows.
 %
-% LAYOUT DISCIPLINE - the two things that made the earlier version ugly, both now fixed:
-%   1. EVERY box style sets an explicit `text width`, so a box can never size itself
-%      to its content and silently sprawl into the neighbouring band.
-%   2. The input column, Stage 1, Stage 2 and Stages 3-4 each own a fixed x-band,
-%      separated by >=16mm, and a container is fitted only around content already
-%      inside its own band.
-% verify with: python check_layout.py   (reports partial box overlaps + word collisions)
-%
-% Typesetting: hyphenation disabled inside nodes, explicit \\ breaks everywhere.
+% LAYOUT DISCIPLINE - three defects that are invisible in source and ruin the render:
+%   1. A container tint is OPAQUE (`retC!4` = 4% colour + 96% WHITE, not 4% alpha).
+%      Containers are declared after their contents (their `fit=` list needs those
+%      nodes), so they paint over every pill and cell. They MUST sit on the
+%      background layer - see the pgfonlayer blocks below.
+%   2. Every box style sets an explicit `text width`. Without it a box sizes to its
+%      content and sprawls into the neighbouring column.
+%   3. Each stage owns a fixed x-band, separated by a gutter.
+% verify with: python check_layout.py
 \documentclass[border=12pt]{standalone}
 \usepackage[T1]{fontenc}
 \usepackage{tikz}
@@ -25,7 +28,6 @@
 \definecolor{retC}{HTML}{2F855A}
 \definecolor{featC}{HTML}{B7791F}
 \definecolor{rankC}{HTML}{C05621}
-\definecolor{fuseC}{HTML}{6B46C1}
 \definecolor{inkC}{HTML}{2D3748}
 \definecolor{dataC}{HTML}{4A5568}
 \definecolor{itemC}{HTML}{718096}
@@ -58,11 +60,11 @@
 ]
 
 % ======================= TITLE =======================
-\node[font=\sffamily\large\bfseries, text=inkC] at (0,6mm)
-  {Senseigigs: gig-to-provider matching pipeline and its out-of-fold labelling loop};
+\node[font=\sffamily\large\bfseries, text=inkC] at (-4mm,6mm)
+  {Senseigigs: two-stage gig-to-provider matching and its out-of-fold labelling loop};
 
 % ============================================================
-% PANEL (a) --- inference pipeline
+% PANEL (a) --- the two-stage matching pipeline
 % ============================================================
 \node[ctitle=ioC, anchor=south west, inner sep=2pt] at (-152mm,-4mm)
   {(a) The matching pipeline};
@@ -74,7 +76,7 @@
 \node[cyl, anchor=north] (corpus) at ([yshift=-5mm]gig.south)
   {Provider\\corpus\\\textbf{3{,}024}};
 
-% ---------- x-band B : Stage 1 (retrieval) ----------
+% ---------- x-band B : STAGE 1 -- RETRIEVAL ----------
 \node[mod=retC, anchor=north] (bm25) at (-72mm,-11mm)
   {\textbf{BM25} ($k_1{=}1.5$, $b{=}0.75$)\\stemmed, title$\times$3, synonyms};
 \foreach \t [count=\i] in {p1413,p88,p2029,p451} {%
@@ -89,96 +91,89 @@
   \node[pill] (dn-\i) at (\px,-49.5mm) {\t};}
 \node[arl, anchor=west] at (-51mm,-49.5mm) {$\cdots$};
 
-\node[mod=retC, anchor=north] (rrf1) at (-72mm,-59mm)
-  {\textbf{Reciprocal Rank Fusion}\\$k=60$, uniform};
 \foreach \t [count=\i] in {p88,p1413,p2720,p2029} {%
   \pgfmathsetlengthmacro{\px}{-90mm + (\i-1)*9.2mm}%
-  \node[pill] (pool-\i) at (\px,-73.5mm) {\t};}
-\node[arl, anchor=west] at (-51mm,-73.5mm) {$\cdots$};
+  \node[pill] (pool-\i) at (\px,-64mm) {\t};}
+\node[arl, anchor=west] at (-51mm,-64mm) {$\cdots$};
+\node[arl, anchor=east] at (-93mm,-64mm) {candidate\\pool};
 
-\coordinate (s1bl) at (-93mm,-76.5mm);
-\coordinate (s1br) at (-40mm,-76.5mm);
+\coordinate (s1bl) at (-96mm,-67mm);
+\coordinate (s1br) at (-45mm,-67mm);
+\coordinate (s1tr) at (-45mm,-14mm);
 \begin{pgfonlayer}{background}
-  \node[cont=retC, fit=(bm25)(b25-1)(b25-4)(dense)(dn-1)(dn-4)(rrf1)(pool-1)(pool-4)(s1bl)(s1br)] (S1) {};
+  \node[cont=retC, fit=(bm25)(b25-1)(b25-4)(dense)(dn-1)(dn-4)(pool-1)(pool-4)
+        (s1bl)(s1br)(s1tr)] (S1) {};
 \end{pgfonlayer}
 \node[ctitle=retC, anchor=south west, inner sep=3pt] at ([xshift=3mm,yshift=1.5mm]S1.north west)
   {Stage 1 --- Retrieval};
 
-% ---------- x-band C : Stage 2 (the per-pair feature vector) ----------
-\node[mod=featC, anchor=north] (fx) at (4mm,-11mm)
+% ---------- x-band C : STAGE 2 -- RANKING ----------
+\node[mod=featC, anchor=north] (fx) at (-6mm,-11mm)
   {\textbf{Per-pair feature vector}\\one row of \texttt{candidates\_top50.csv}};
 \foreach \v [count=\i] in {164.4,1,0.757,1,0.033,1} {%
-  \pgfmathsetlengthmacro{\px}{-20mm + (\i-1)*9.2mm}%
+  \pgfmathsetlengthmacro{\px}{-27mm + (\i-1)*9.2mm}%
   \node[fcell] (fa-\i) at (\px,-25mm) {\v};}
-\node[flab, anchor=east] at (-22mm,-25mm) {retrieval};
+\node[flab, anchor=east] at (-29.5mm,-25mm) {retrieval};
 \foreach \v [count=\i] in {2,1,0.81,0.41,0.63,0.50} {%
-  \pgfmathsetlengthmacro{\px}{-20mm + (\i-1)*9.2mm}%
+  \pgfmathsetlengthmacro{\px}{-27mm + (\i-1)*9.2mm}%
   \node[fcell] (fb-\i) at (\px,-31.5mm) {\v};}
-\node[flab, anchor=east] at (-22mm,-31.5mm) {tags};
+\node[flab, anchor=east] at (-29.5mm,-31.5mm) {tag 1};
 \foreach \v [count=\i] in {0.50,0.81,0.33,0.14,0.63,0.11} {%
-  \pgfmathsetlengthmacro{\px}{-20mm + (\i-1)*9.2mm}%
+  \pgfmathsetlengthmacro{\px}{-27mm + (\i-1)*9.2mm}%
   \node[fcell] (fc-\i) at (\px,-38mm) {\v};}
-\node[flab, anchor=east] at (-22mm,-38mm) {graph};
-\foreach \v [count=\i] in {0.63,0.41,0.52,0.03,0.10,0.07} {%
-  \pgfmathsetlengthmacro{\px}{-20mm + (\i-1)*9.2mm}%
+\node[flab, anchor=east] at (-29.5mm,-38mm) {tag 2};
+\foreach \v [count=\i] in {0.63,0.41,0.52,0.03,0.10,0.19} {%
+  \pgfmathsetlengthmacro{\px}{-27mm + (\i-1)*9.2mm}%
   \node[fcell] (fd-\i) at (\px,-44.5mm) {\v};}
-\node[flab, anchor=east] at (-22mm,-44.5mm) {crosses};
-\node[arl, anchor=north] at (4mm,-48.5mm) {28 features per (gig, provider) pair};
+\node[flab, anchor=east] at (-29.5mm,-44.5mm) {tag 3};
+\node[arl, anchor=north] at (-6mm,-48mm) {one row = 17 features (9 retrieval + 8 tag), wrapped};
 
-\coordinate (s2bl) at (-34mm,-51mm);
-\begin{pgfonlayer}{background}
-  \node[cont=featC, fit=(fx)(fa-1)(fa-6)(fd-1)(fd-6)(s2bl)] (S2) {};
-\end{pgfonlayer}
-\node[ctitle=featC, anchor=south west, inner sep=3pt] at ([xshift=3mm,yshift=1.5mm]S2.north west)
-  {Stage 2 --- Features};
+\node[mod=rankC, anchor=north] (mu) at (74mm,-28mm)
+  {\textbf{LambdaMART reranker}\\rank:ndcg objective};
+\node[arl, anchor=south] at (74mm,-17mm) {re-ranking};
 
-% ---------- x-band D : Stages 3-4 ----------
-\node[mod=rankC, anchor=north] (r1) at (86mm,-11mm) {\textbf{LambdaMART base}\\17 features};
-\node[mod=rankC, anchor=north] (r2) at (86mm,-25mm) {\textbf{LambdaMART Tier-1}\\28 features};
-\node[mod=rankC, anchor=north] (r3) at (86mm,-39mm) {\textbf{Cross-encoder}\\MiniLM-L6};
-\node[mod=fuseC, anchor=north] (fus) at (86mm,-56mm) {\textbf{Weighted RRF}\\$0.4\,/\,0.4\,/\,0.2$};
 \foreach \t [count=\i] in {p2720,p1892,p88,p1413} {%
-  \pgfmathsetlengthmacro{\px}{67mm + (\i-1)*12.2mm}%
-  \node[pill] (out-\i) at (\px,-72mm) {\t};}
-\node[arl, anchor=west] at (116mm,-72mm) {$\cdots$};
+  \pgfmathsetlengthmacro{\px}{52mm + (\i-1)*12.2mm}%
+  \node[pill] (out-\i) at (\px,-50mm) {\t};}
+\node[arl, anchor=west] at (101mm,-50mm) {$\cdots$};
 \node[goodC, font=\tiny\bfseries, anchor=north] at (out-1.south) {91};
 \node[goodC, font=\tiny\bfseries, anchor=north] at (out-2.south) {88};
-\node[arl, anchor=north] at (86mm,-77mm) {top-10 shortlist, scores 0--100};
-\coordinate (s4bl) at (54mm,-81mm);
-\coordinate (s4r)  at (120mm,-68mm);
+\node[arl, anchor=north] at (74mm,-55mm) {top-10 shortlist, scores 0--100};
+
+\coordinate (s2bl) at (-32mm,-58mm);
+\coordinate (s2r)  at (107mm,-58mm);
 \begin{pgfonlayer}{background}
-  \node[cont=fuseC, fit=(r1)(r2)(r3)(fus)(out-1)(out-4)(s4bl)(s4r)] (S4) {};
+  \node[cont=rankC, fit=(fx)(fa-1)(fa-6)(fd-1)(fd-6)(mu)(out-1)(out-4)
+        (s2bl)(s2r)] (S2) {};
 \end{pgfonlayer}
-\node[ctitle=fuseC, anchor=south west, inner sep=3pt] at ([xshift=3mm,yshift=1.5mm]S4.north west)
-  {Stages 3--4 --- Rankers, fusion, shortlist};
+\node[ctitle=rankC, anchor=south west, inner sep=3pt] at ([xshift=3mm,yshift=1.5mm]S2.north west)
+  {Stage 2 --- Ranking};
 
 % ============================================================
 % PANEL (b) --- labelling + out-of-fold loop
 % ============================================================
-\node[ctitle=goodC, anchor=south west, inner sep=2pt] at (-152mm,-95mm)
+\node[ctitle=goodC, anchor=south west, inner sep=2pt] at (-152mm,-102mm)
   {(b) Labelling and out-of-fold evaluation};
 
-\node[cyl, anchor=north] (labels) at (-132mm,-102mm) {Judged\\pairs\\\textbf{24{,}070}};
-\node[mod=goodC, anchor=north] (grader) at (-80mm,-102mm) {\textbf{LLM grader}\\qwen3.8:27b, rubric v5};
-\node[mod=goodC, anchor=north] (grades) at (-24mm,-102mm) {\textbf{grades 0--3}\\per (gig, provider) pair};
-\node[mod=goodC, anchor=north] (folds)  at (32mm,-102mm) {\textbf{GroupKFold by gig}\\5 folds, none seen};
-\node[mod=goodC, anchor=north] (train)  at (-80mm,-130mm) {\textbf{Train on 4 folds}\\score the held-out fold};
-\node[mod=goodC, anchor=north] (oof)    at (-24mm,-130mm) {\textbf{Out-of-fold}\\ranked lists};
-\node[mod=goodC, anchor=north] (eval)   at (32mm,-130mm) {\textbf{Evaluate}\\NDCG@10, P@5, MRR};
-\node[tb, anchor=north] (metrics) at (108mm,-102mm)
-  {\textbf{NDCG@10} 0.9121\\[2pt]\textbf{P@5} 0.9226\\[2pt]\textbf{MRR} 0.9878};
+\node[cyl, anchor=north] (labels) at (-132mm,-109mm) {Judged\\pairs\\\textbf{24{,}070}};
+\node[mod=goodC, anchor=north] (grader) at (-80mm,-109mm) {\textbf{LLM grader}\\qwen3.8:27b, rubric v5};
+\node[mod=goodC, anchor=north] (grades) at (-24mm,-109mm) {\textbf{grades 0--3}\\per (gig, provider) pair};
+\node[mod=goodC, anchor=north] (folds)  at (32mm,-109mm) {\textbf{GroupKFold by gig}\\5 folds, none seen};
+\node[mod=goodC, anchor=north] (train)  at (-80mm,-138mm) {\textbf{Train on 4 folds}\\score the held-out fold};
+\node[mod=goodC, anchor=north] (oof)    at (-24mm,-138mm) {\textbf{Out-of-fold}\\ranked lists};
+\node[mod=goodC, anchor=north] (eval)   at (32mm,-138mm) {\textbf{Evaluate}\\NDCG@10, P@5, MRR};
+\node[tb, anchor=north] (metrics) at (100mm,-109mm)
+  {\textbf{NDCG@10} 0.8955\\[2pt]\textbf{P@5} 0.8967\\[2pt]\textbf{MRR} 0.9770};
 
 % ---------- flows, panel (a) ----------
 \draw[ar] (gig.east)    -- node[arl, midway, above, yshift=0.5mm] {query} ([yshift=3mm]bm25.west);
 \draw[ar] (corpus.east) -- node[arl, midway, above, yshift=0.5mm] {5 fields} (dense.west);
-\draw[ar] (bm25.east)  -- ++(6mm,0)  |- ([yshift=1.5mm]rrf1.east);
-\draw[ar] (dense.east) -- ++(10mm,0) |- ([yshift=-1.5mm]rrf1.east);
+% both retrievers contribute their candidates to the pool
+\draw[ar] (bm25.east)  -- ++(5mm,0)  |- ([xshift=-4mm]pool-4.north);
+\draw[ar] (dense.east) -- ++(9mm,0)  |- ([xshift=6mm]pool-4.north);
 \draw[ar] (S1.east |- fx.west) -- (fx.west);
-\draw[ar] (S2.east |- r2.west) -- (r2.west);
-\draw[ar] (r1.west) -- ++(-6mm,0) |- ([yshift=2.5mm]fus.west);
-\draw[ar] (r2.west) -- ++(-4mm,0) |- ([yshift=0mm]fus.west);
-\draw[ar] (r3.west) -- ++(-2mm,0) |- ([yshift=-2.5mm]fus.west);
-\node[arl, anchor=east] at ([xshift=-9mm]r2.west) {3 rankers\\.\\ independent};
+\draw[ar] (S2.east |- mu.west) -- ([xshift=-30mm]mu.west);
+\draw[ar] ([xshift=-30mm]mu.west) |- ([xshift=-6mm]out-1.north);
 
 % ---------- flows, panel (b) ----------
 \draw[ar] (labels.east)  -- (grader.west);
@@ -191,10 +186,10 @@
 \draw[ar] (oof.east)     -- (eval.west);
 \draw[ar] (eval.east)    -- (metrics.west);
 
-% the top-up loop: this project's analogue of iterative self-improvement
+% the top-up loop
 \draw[ar, draw=rankC!75!black, dashed]
   (metrics.north) |- ([yshift=7mm]labels.north) -- (labels.north);
-\node[arl, text=rankC!75!black, anchor=south] at (-16mm,-94mm)
+\node[arl, text=rankC!75!black, anchor=south] at (-20mm,-101mm)
   {\textbf{top-up:} grade the ungraded providers a ranker puts in its top-10, merge, retrain};
 
 \end{tikzpicture}
