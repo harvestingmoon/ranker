@@ -54,6 +54,8 @@
   arl/.style={font=\tiny, text=inkC!85, fill=white, inner sep=1.3pt},
   tb/.style={rounded corners=3pt, draw=inkC!30, fill=inkC!6, inner sep=4pt,
              font=\scriptsize, text=inkC, text width=26mm},
+  grp/.style={rounded corners=3.5pt, draw=rankC!45!black, fill=rankC!7,
+              line width=0.7pt, inner sep=3.4mm},
 ]
 
 % ======================= TITLE =======================
@@ -107,7 +109,7 @@
   {Stage 1 --- Retrieval};
 
 % ---------- x-band C : STAGE 2 -- RANKING ----------
-\node[mod=featC, anchor=north] (fx) at (2mm,-11mm)
+\node[mod=featC, anchor=north] (fx) at (-9mm,-11mm)
   {\textbf{Per-pair feature vector}\\one row of \texttt{candidates\_top50.csv}};
 
 % 2 rows: 9 retrieval features, then 8 tag features. Five shown, then an ellipsis.
@@ -131,20 +133,25 @@
 \foreach \t [count=\i] in {p2720,p1892,p88,p1413} {%
   \pgfmathsetlengthmacro{\px}{44mm + (\i-1)*12.2mm}%
   \node[pill] (out-\i) at (\px,-52mm) {\t};}
-\node[arl, anchor=west] at (94mm,-52mm) {$\cdots$};
+\node[arl, anchor=west] (outell) at (88mm,-52mm) {$\cdots$};
 \node[goodC, font=\tiny\bfseries, anchor=north] at (out-1.south) {91};
 \node[goodC, font=\tiny\bfseries, anchor=north] at (out-2.south) {88};
-\node[arl, anchor=north] at (62mm,-57mm) {top-10 shortlist, scores 0--100};
 
-\coordinate (s2bl) at (-44mm,-60mm);
-\coordinate (s2r)  at (97mm,-60mm);
-\coordinate (s2tr) at (97mm,-13mm);
+\coordinate (s2bl) at (-44mm,-64mm);
+\coordinate (s2r)  at (104mm,-64mm);
+\coordinate (s2tr) at (104mm,-13mm);
 \begin{pgfonlayer}{background}
   \node[cont=rankC, fit=(fx)(fa-1)(fa-6)(fb-1)(fb-6)(mu)(out-1)(out-4)
         (s2bl)(s2r)(s2tr)] (S2) {};
 \end{pgfonlayer}
 \node[ctitle=rankC, anchor=south west, inner sep=3pt] at ([xshift=3mm,yshift=1.5mm]S2.north west)
   {Stage 2 --- Ranking};
+\begin{pgfonlayer}{background}
+  \node[grp, fit=(out-1)(out-4)(outell)] (outgrp) {};
+\end{pgfonlayer}
+\node[arl, anchor=north] at ([yshift=-1.5mm]outgrp.south)
+  {top-10 shortlist, scores 0--100};
+
 
 % ============================================================
 % PANEL (b) --- labelling + out-of-fold loop
@@ -171,8 +178,7 @@
 % stage 1 -> stage 2, entering the feature box
 \draw[ar] (S1.east |- fx.west) -- (fx.west);
 % model -> shortlist
-\coordinate (outrow) at (62mm,-48mm);
-\draw[ar] (mu.south) -- (outrow);
+\draw[ar] (mu.south) -- (outgrp.north);
 
 % ---------- flows, panel (b) ----------
 \draw[ar] (labels.east)  -- (grader.west);
