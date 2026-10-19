@@ -23,6 +23,7 @@ is the all-data serving model. They cannot match exactly, and that is correct.
 import argparse
 import csv
 import json
+import sys
 from pathlib import Path
 
 import xgboost as xgb
@@ -84,7 +85,8 @@ def main():
     # order differs because one is cross-validated and one is not.
     ref = json.load(open(RESULTS))[str(args.hire_id)]
     overlap = len(set(int(p) for p, _, _ in scored[: len(ref)]) & set(ref))
-    print(f"# OOF-artifact overlap: {overlap}/{len(ref)} of the same providers", flush=True)
+    print(f"# OOF-artifact overlap: {overlap}/{len(ref)} of the same providers",
+          file=sys.stderr, flush=True)
 
     provider = {str(p["provider_id"]): p for p in json.load(open(DATA / "providers.json"))}
     hire = next(h for h in json.load(open(DATA / "hirers.json"))
