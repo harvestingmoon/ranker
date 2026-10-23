@@ -26,6 +26,7 @@ Then a small rank-fusion (weighted RRF) of the base and the upgraded ranker.
     python pipeline/tier1_rank.py --data-dir data/data_set_v5_tax
 """
 import argparse
+import csv
 import json
 import math
 from collections import defaultdict
@@ -37,6 +38,7 @@ from sklearn.model_selection import GroupKFold
 
 import evaluate as E
 import rerank_ltr as R
+from rerank_ltr import BM25_FIELD_FEATURES
 
 BASE = Path(__file__).parent
 METRICS = ["p@5", "p@10", "r@5", "r@10", "ndcg@5", "ndcg@10", "mrr"]
@@ -217,6 +219,8 @@ def main():
     ap.add_argument("--data-dir", default="data/data_set_v5_tax")
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--bm25-fields", action="store_true",
+                    help="also merge features_data/<ds>/bm25_fields.csv (per-section BM25)")
     args = ap.parse_args()
 
     R.set_dataset(args.data_dir)
@@ -227,7 +231,26 @@ def main():
     gt_global = gt
 
     rows, base_feats = R.load_candidates(50, None, tag_features=True)
-    R.normalize_by_query(rows, R.SCORE_FEATURES, "zscore")
+    if args.bm25_fields:
+        bf_path = R.FEAT_DIR / "bm25_fields.csv"
+        if not bf_path.exists():
+            raise SystemExit(f"{bf_path} not found -- run `python pipeline/bm25_fields.py "
+                             f"--data-dir {args.data_dir}`")
+        bf = {(r["hire_id"], r["provider_id"]): [float(r[c]) for c in BM25_FIELD_FEATURES]
+              for r in csv.DictReader(bf_path.open())}
+        miss = 0
+        for r in rows:
+            vals = bf.get((str(r["hire_id"]), str(r["provider_id"])))
+            if vals is None:
+                vals = [0.0] * len(BM25_FIELD_FEATURES)
+                miss += 1
+            for c, v in zip(BM25_FIELD_FEATURES, vals):
+                r[c] = v
+        base_feats = list(base_feats) + list(BM25_FIELD_FEATURES)
+        print(f"  bm25 field features merged ({len(BM25_FIELD_FEATURES)} cols); {miss} rows missing -> 0.0")
+
+    R.normalize_by_query(rows, R.SCORE_FEATURES + (list(BM25_FIELD_FEATURES) if args.bm25_fields else []),
+                         "zscore")
 
     gig, prov, sk2spec, sk2cat = load_index(BASE / args.data_dir)
     print("building taxonomy-graph + interaction features ...")
@@ -265,9 +288,10 @@ def main():
 
     out_dir = R.RESULTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "tier1_base.json").write_text(json.dumps({str(q): [int(p) for p in v] for q, v in lb.items()}))
-    (out_dir / "tier1_model.json").write_text(json.dumps({str(q): [int(p) for p in v] for q, v in lt.items()}))
-    (out_dir / "tier1_fuse.json").write_text(json.dumps({str(q): [int(p) for p in v] for q, v in fused.items()}))
+    suf = "_bm25f" if args.bm25_fields else ""
+    (out_dir / f"tier1_base{suf}.json").write_text(json.dumps({str(q): [int(p) for p in v] for q, v in lb.items()}))
+    (out_dir / f"tier1_model{suf}.json").write_text(json.dumps({str(q): [int(p) for p in v] for q, v in lt.items()}))
+    (out_dir / f"tier1_fuse{suf}.json").write_text(json.dumps({str(q): [int(p) for p in v] for q, v in fused.items()}))
 
     print(f"\n  per-fold NDCG@10  base: {np.mean(fold_b):.4f} +- {np.std(fold_b):.4f}"
           f"   tier1: {np.mean(fold_t):.4f} +- {np.std(fold_t):.4f}")
