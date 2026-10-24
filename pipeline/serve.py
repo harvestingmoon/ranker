@@ -31,13 +31,18 @@ from retrieval_bm25 import BM25Retriever
 from retrieval_dense import encode_docs, encode_queries, rank_from_raw
 from retrieval_rrf import rrf_fuse
 from tag_features import TAG_FEATURES, TagMatcher, embed_skills, tag_axes
+from tier import load_tier
 
 BASE = Path(__file__).parent
 DATA = BASE / "data" / "data_set_v5_tax"
 CACHE = BASE / "cache_data" / "data_set_v5_tax"
-MODEL = BASE / "models_data" / "data_set_v5_tax" / "v5tax_tags_xgb.json"
-FEATURES = list(DEFAULT_FEATURES) + list(TAG_FEATURES)     # 17, declared order
-TOP_K_POOL = 50
+
+# Swapped by --tier in main(). Both tiers answer the same contract; only the model
+# behind the ranking changes (see configs/*.json and API_IO_SPEC.md).
+TIER = load_tier("lightweight")
+MODEL = BASE / TIER["model_path"]
+FEATURES = list(TIER["features"])
+TOP_K_POOL = TIER["retrieval"]["pool_size"]
 
 _state: dict = {}
 
@@ -73,7 +78,10 @@ def _tag_matcher(gig):
     """TagMatcher over the corpus plus this gig, so a new gig scores too."""
     s = _load()
     hirers = s["hirers"] + [gig]
-    skills = sorted({k for r in hirers for k in tag_axes(r)[2]})
+    # the vocabulary must cover PROVIDER tags too: features() looks up provider-side
+    # skills, and a hirer-only vocabulary KeyErrors on any skill unique to a provider
+    skills = sorted({k for r in hirers for k in tag_axes(r)[2]}
+                    | {k for p in s["providers"] for k in tag_axes(p)[2]})
     vec = embed_skills(skills, CACHE / "skill_vectors.json") if skills else {}
     return TagMatcher(hirers, s["providers"], vec)
 
@@ -117,7 +125,7 @@ def serve(gig: dict, top_k: int = 10) -> dict:
         row.update(matcher.features(hid, pid))
         rows.append(row)
 
-    normalize_by_query(rows, list(SCORE_FEATURES), "zscore")
+    normalize_by_query(rows, list(TIER["score_features"]), "zscore")
 
     # ---- stage 3: rank ------------------------------------------------------
     X = [[r[f] for f in FEATURES] for r in rows]
@@ -152,21 +160,36 @@ def serve(gig: dict, top_k: int = 10) -> dict:
         "hire_id": hid,
         "results": results,
         "meta": {
+            "tier": TIER["tier"],
+            "model": MODEL.name,
+            "sota_ndcg@10": TIER["sota"]["ndcg@10"],
             "n_features": len(FEATURES),
             "candidate_pool": len(rows),
             "returned": len(results),
-            "normalization": "per-query zscore on SCORE_FEATURES",
+            "normalization": "per-query zscore on score_features",
             "score_scale": "0-100 ranker score, NOT a probability",
         },
     }
 
 
 def main():
+    global TIER, MODEL, FEATURES
     ap = argparse.ArgumentParser()
     ap.add_argument("--hire-id")
     ap.add_argument("--gig-json", help="path to a gig record, or '-' for stdin")
     ap.add_argument("--top-k", type=int, default=10)
+    ap.add_argument("--tier", default="lightweight", choices=["lightweight", "pro"],
+                    help="lightweight = GBDT only; pro = cross-encoders + set-wise transformer")
     a = ap.parse_args()
+
+    TIER = load_tier(a.tier)
+    if not TIER.get("servable"):
+        raise SystemExit(f"tier '{a.tier}' has no serving artifact.\n  blocked on: {TIER['blocked_on']}")
+    MODEL = BASE / TIER["model_path"]
+    FEATURES = list(TIER["features"])
+    # the response's signals{retrieval,business_fit,taxonomy} blocks slice this list
+    assert FEATURES == list(DEFAULT_FEATURES) + list(TAG_FEATURES), \
+        "tier features must match the declared signal blocks"
 
     if a.gig_json:
         raw = sys.stdin.read() if a.gig_json == "-" else Path(a.gig_json).read_text(encoding="utf-8")

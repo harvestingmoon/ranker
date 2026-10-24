@@ -13,6 +13,33 @@ It scores with the saved model, so the numbers in the output are real.
 
 ---
 
+## Tiers
+
+Two tiers, one contract. **The request and response shapes below are identical for
+both** — a client switches tiers by changing one config value, never its parsing code.
+
+| tier | what runs | NDCG@10 | P@5 | MRR | servable |
+|---|---|---|---|---|---|
+| `lightweight` | BM25 + dense → RRF → LambdaMART (17 features) | **0.8982** | 0.8991 | 0.9774 | yes |
+| `pro` | same retrieval → 2 cross-encoders → set-wise transformer | **0.9508** | 0.9541 | 0.9940 | **no** |
+
+Configs live in `configs/lightweight.json` and `configs/pro.json`; `pipeline/tier.py
+--check` asserts they still agree on the response shape and feature vector.
+
+```bash
+python pipeline/serve.py --hire-id 1 --tier lightweight
+python pipeline/serve.py --hire-id 1 --tier pro   # exits with the blocking reason
+```
+
+**`pro` has no serving artifact yet.** `listwise_ranker_v2.py` emits out-of-fold
+ranked lists only (it never calls `torch.save`), and its cross-encoder inputs are
+precomputed OOF CSVs rather than a live scorer. The 0.9508 is an offline evaluation,
+not a service. Serving it needs: fit on all queries + `torch.save`, a live CE pass
+over the candidate pool, and a response builder — the last one already exists in
+`serve.py` and can be reused verbatim.
+
+---
+
 ## Request
 
 ```json
@@ -107,10 +134,19 @@ Until that exists, label the field as a score, not a probability.
 
 ## Known-dead fields
 
-Three features are emitted as `0.0` on every request and always will be until the
-corpus gains the fields: `budget_fit` (needs `budget_lo`/`budget_hi`/`rate_per_hour`),
-`seniority_fit` (needs `seniority_needed`/`seniority`), `avail_immediacy` (needs
-`availability`). Do not build UI that depends on them.
+`seniority_fit` is emitted as `0.5` at train time and `0.0` at serve time on every
+request, and will stay that way: `providers.json` has **no `seniority` field at all**
+(0/3,024 — the key does not exist, and neither does `years_experience`). The gig side
+has `seniority_needed` (100% populated: senior 75%, mid 21%, expert 4%), but a
+*fit* needs both halves, and a within-query ranker cannot use the gig value alone —
+it is constant across all 50 candidates. Do not build UI that depends on it.
+
+`budget_fit` and `avail_immediacy` **are now supported by the data** (`budget_lo` /
+`budget_hi` / `rate_per_hour` and `available_from` / `start_by`, all 100%), but the
+shipped model was trained with them zeroed, so they are still emitted as `0.0`:
+feeding live values to a model that never saw them is out-of-distribution. Retraining
+on live values scored 0.8962 vs 0.8962 — identical — so the zeros stayed. A future
+model can turn them on by setting `dead_features` aside and retraining.
 
 ## Out-of-fold vs serving
 
