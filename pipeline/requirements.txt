@@ -1,10 +1,8 @@
-pandas
-numpy
-rank-bm25
-sentence-transformers
-datasets
-accelerate>=1.1.0
-scikit-learn
-matplotlib
-nbformat
-jupyter
+# Shared + Lightweight: Stage 1 retrieval, features, LambdaMART, serving.
+#     pip install -r pipeline/requirements.txt
+numpy>=1.26
+scikit-learn>=1.4              # GroupKFold
+xgboost>=2.0                   # LambdaMART (rank:ndcg)
+rank-bm25>=0.2.2               # Stage-1 BM25
+torch>=2.2
+sentence-transformers>=3.0     # mxbai dense retrieval + tag_features' skill embeddings

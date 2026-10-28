@@ -10,7 +10,7 @@ Two things this pins down that the old contract got wrong:
    TAG_FEATURES below. Anyone coding against the old shape reads dead fields.
 
 2. NORMALISATION IS PART OF THE CONTRACT. The model was trained on per-query
-   z-scored SCORE_FEATURES (rerank_ltr.py --normalize-scores zscore). A server
+   z-scored SCORE_FEATURES (rerank_ltr.normalize_by_query). A server
    that skips this feeds the model features on a different scale and silently
    gets worse rankings. That is a serving requirement, not an option.
 

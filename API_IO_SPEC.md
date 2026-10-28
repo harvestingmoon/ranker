@@ -31,7 +31,7 @@ python pipeline/serve.py --hire-id 1 --tier lightweight
 python pipeline/serve.py --hire-id 1 --tier pro   # exits with the blocking reason
 ```
 
-**`pro` has no serving artifact yet.** `listwise_ranker_v2.py` emits out-of-fold
+**`pro` has no serving artifact yet.** `pro_ranker.py` emits out-of-fold
 ranked lists only (it never calls `torch.save`), and its cross-encoder inputs are
 precomputed OOF CSVs rather than a live scorer. The 0.9507 (`listwise_ceil_s7.json`) is an offline evaluation,
 not a service. Serving it needs: fit on all queries + `torch.save`, a live CE pass

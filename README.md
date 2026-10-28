@@ -1,8 +1,21 @@
 # Senseigigs — gig ↔ provider matching
 
 Given a gig (a hirer's request), return the providers best suited to do it, ranked, with a
-0–100 ranking score. The system ships in **two tiers** that share the same retrieval stage and
-the same response contract, and differ only in how the shortlist is re-ranked:
+0–100 ranking score. The corpus is 1,106 gigs × 3,024 provider showcases, and relevance comes
+from 24,070 LLM-graded gig–provider pairs (see [Data](#data)).
+
+Matching is done in two stages. **Stage 1 (recall)** narrows 3,024 providers to a shortlist of
+50 with two text retrievers fused together. **Stage 2 (re-ranking)** orders that shortlist —
+and this is where the two tiers differ.
+
+## Architecture
+
+![Two-tier architecture](figures/architecture.svg)
+
+## Lightweight and Pro
+
+Both tiers share Stage 1, the 17 base features and the response contract; a client switches
+tier by changing one config value. They differ only in the Stage-2 re-ranker:
 
 | | **Lightweight** | **Pro** |
 |---|---|---|
@@ -16,34 +29,18 @@ the same response contract, and differ only in how the shortlist is re-ranked:
 | Config | `configs/lightweight.json` | `configs/pro.json` |
 | Artifact | `models_data/data_set_v5_tax/v5tax_tags_xgb.json` | `results_data/data_set_v5_tax/listwise_ceil_s7.json` (OOF lists) |
 
-Pro beats Lightweight by **+0.0525 NDCG@10 [+0.0476, +0.0573]** (paired bootstrap, 10k
-resamples) and is better on every metric with a CI excluding 0. Lightweight is the one you
-can run today, on a CPU, from a single XGBoost file.
+- **Lightweight** is the practical default: one XGBoost file, runs on a CPU, and has a live
+  serving path today.
+- **Pro** is the accuracy ceiling: it adds three cross-encoders that read the gig and provider
+  text together, and a transformer that compares all 50 candidates at once. It beats
+  Lightweight by **+0.0525 NDCG@10 [+0.0476, +0.0573]** (paired bootstrap, 10k resamples) and
+  is better on every metric with a CI excluding 0, but needs a GPU and has no serving path yet.
 
 All numbers are out-of-fold over all 1,106 gigs — see [Evaluation](#evaluation).
 
-## Architecture
+## Stages
 
-```mermaid
-flowchart LR
-    G["gig request<br/>title + description + tags"] --> S1
-    subgraph S1["Stage 1 — recall (both tiers)"]
-        direction TB
-        B["refined BM25"] --> RRF["RRF k=60"]
-        D["mxbai-embed-large<br/>dense cosine"] --> RRF
-    end
-    S1 --> P["top-50 candidates"]
-    P --> F["17 base features<br/>6 retrieval · 3 structured · 8 SkillsFuture tag"]
-
-    F --> L["<b>Lightweight</b><br/>LambdaMART<br/>300 trees, depth 4"]
-
-    F --> X["+ 11 Tier-1 features<br/>taxonomy graph · crosses · provider prior"]
-    CE["3 cross-encoders<br/>MiniLM · bge-v2-m3 · gte-modernbert"] --> X
-    X --> T["<b>Pro</b><br/>set-wise transformer<br/>attends across all 50"]
-
-    L --> R["ranked providers + 0–100 score"]
-    T --> R
-```
+In the order of the diagram above.
 
 ### Stage 1 — recall (shared)
 
@@ -111,13 +108,13 @@ hurt (0.8781 → 0.7966). But their errors are decorrelated from the retrieval/t
 from each other, which makes them strong *inputs* to a model that can decide per gig how much
 to trust each.
 
-**2. Set-wise transformer** (`listwise_ranker_v2.py`, model class in `listwise_ranker.py`). Each
+**2. Set-wise transformer** (`pro_ranker.py`, features from `pro_features.py`). Each
 candidate is a 37-feature vector:
 
 | Feature family | n | What |
 |---|---|---|
 | Base | 17 | the shared features above |
-| Tier-1 | 11 | taxonomy-graph partial credit (sibling skill under the same specialisation, skill under the same category, graph distance, Jaccard), interaction crosses (`tl_x_rank`, `speccov_x_tl`, `skillcov_x_tl`), fold-aware provider prior — built in `tier1_rank.py` / `hpo_ltr.py` |
+| Tier-1 | 11 | taxonomy-graph partial credit (sibling skill under the same specialisation, skill under the same category, graph distance, Jaccard), interaction crosses (`tl_x_rank`, `speccov_x_tl`, `skillcov_x_tl`), fold-aware provider prior — built in `pro_features.py` |
 | Cross-encoder scores | 3 | OOF score from each CE |
 | CE consensus | 6 | per-gig rank of each CE score, top-10 / top-20 votes, mean rank |
 
@@ -127,7 +124,7 @@ gig**, so it can learn *relative* judgements ("best fit for this gig") that a pe
 cannot. Features are standardised within each gig.
 
 Loss: pairwise logistic weighted by `|gain_i − gain_j|`, on the grader's **continuous 0–100
-score** (`llm_scores_v5.json`, via `soft_label_rank.py`) rather than the 4 coarse bins. Training:
+score** (`llm_scores_v5.json`) rather than the 4 coarse bins. Training:
 GroupKFold by gig, 80 epochs, AdamW lr 1e-3, cosine schedule, grad-clip 1.0, 32 gigs per batch,
 **7 seeds averaged** per fold.
 
@@ -160,7 +157,7 @@ python serve.py --tier pro --hire-id 1                      # exits with the blo
 python tier.py --check
 ```
 
-**Pro is not servable yet.** `listwise_ranker_v2.py` writes out-of-fold ranked lists only (it
+**Pro is not servable yet.** `pro_ranker.py` writes out-of-fold ranked lists only (it
 never saves a model), and its cross-encoder inputs are precomputed OOF CSVs, not a live scorer.
 Serving it needs: (1) fit the set-wise model on all gigs and save it, (2) run the three
 cross-encoders live over the 50-candidate pool (GPU), (3) reuse `serve.py`'s response builder.
@@ -231,30 +228,33 @@ Full history of variants tried, including rejected ones: [`ablation.md`](ablatio
 
 ## Layout
 
+![Code flow](figures/code_flow.svg)
+
 | Path | Tier | What |
 |---|---|---|
 | `configs/lightweight.json`, `configs/pro.json` | both | Tier definitions: model, retrieval settings, feature order, headline numbers |
 | `pipeline/tier.py` | both | Loads a tier config; `--check` asserts both tiers share one response contract |
 | `pipeline/data/data_set_v5/`, `data_set_v5_tax/` | both | Corpus and labels (see [Data](#data)) |
+| `pipeline/enrich_v5_with_tags.py` | both | Builds `data_set_v5_tax` from `data_set_v5` + the mcjuh `sf_v1` tags (one-off) |
+| `pipeline/merge_topup_grades.py` | both | Folds the top-up grades into a corpus's label files (idempotent) |
 | `pipeline/run_pipeline.py`, `retrieval_*.py`, `corpus.py` | both | Stage 1: refined BM25, mxbai dense, RRF |
 | `pipeline/features.py` | both | Builds `features_data/<corpus>/candidates_top50.csv` (top-50 pool + retrieval/structured features + labels) |
-| `pipeline/tag_features.py`, `taxonomy.py` | both | Builds `tag_features.csv`, the 8 tag features (own process — torch) |
-| `pipeline/enrich_v5_with_tags.py` | both | Builds `data_set_v5_tax` from `data_set_v5` + the mcjuh `sf_v1` tags |
-| `pipeline/merge_topup_grades.py` | both | Folds the top-up grades into a corpus's label files (idempotent) |
+| `pipeline/tag_features.py` | both | Builds `tag_features.csv`, the 8 tag features (own process — torch) |
 | `pipeline/evaluate.py` | both | P@K / R@K / NDCG@K / MRR |
 | `pipeline/rerank_ltr.py` | Lightweight | LambdaMART training + OOF evaluation → `v5tax_tags_xgb.json`, `v5tax_tags.json` |
 | `pipeline/serve.py`, `api_io_example.py` | Lightweight | Live serving path and I/O example generator |
 | `pipeline/rerank_crossencoder.py` | Pro | Cross-encoder OOF fine-tune → `features_data/data_set_v5/ce_scores_v5ce_{minilm,bge,gte}.csv` |
-| `pipeline/listwise_ranker_v2.py` | Pro | Set-wise transformer → `listwise_ceil_s7.json` |
-| `pipeline/listwise_ranker.py`, `hpo_ltr.py`, `tier1_rank.py`, `soft_label_rank.py` | Pro | Imported by `listwise_ranker_v2.py`: model class, feature rows, Tier-1 features, continuous labels |
+| `pipeline/pro_features.py` | Pro | The 37-feature vector (base + taxonomy graph + interactions + provider prior + CE scores / ranks) and the continuous labels |
+| `pipeline/pro_ranker.py` | Pro | Set-wise transformer, OOF training → `listwise_ceil_s7.json` |
 | `pipeline/tag_ablation.py`, `paired_bootstrap.py` | evidence | The tags-vs-no-tags significance test and bootstrap helper |
-| `pipeline/features_data/`, `models_data/`, `results_data/` | — | Feature tables, trained models, out-of-fold ranked lists. Only tier artifacts and the lists behind the significance tests are kept; earlier experiment outputs are in git history (tag `pre-cleanup`) |
-| `figures/` | — | Architecture and workflow diagrams (LaTeX sources + renders) |
+| `pipeline/features_data/`, `models_data/`, `results_data/` | — | Feature tables, trained models, out-of-fold ranked lists. Only tier artifacts and the lists behind the significance tests are kept; earlier experiment outputs and scripts are in git history (tag `pre-cleanup`) |
+| `figures/` | — | `architecture` and `code_flow` diagrams: TikZ source (`.tex`) + `.pdf` / `.svg` / `.png`; rebuild with `figures/build.sh` |
 
 ## Reproduce
 
 ```bash
-pip install -r pipeline/requirements.txt -r pipeline/requirements-rerank.txt
+pip install -r pipeline/requirements.txt                                  # Lightweight
+pip install -r pipeline/requirements.txt -r pipeline/requirements-pro.txt  # Pro
 cd pipeline
 ```
 
@@ -273,8 +273,7 @@ python tag_features.py --data-dir data/data_set_v5_tax
 ```bash
 # OOF lists -> results_data/data_set_v5_tax/v5tax_tags.json
 # full-data model -> models_data/data_set_v5_tax/v5tax_tags_xgb.json
-python rerank_ltr.py --mode ablation --data-dir data/data_set_v5_tax --top-k 50 \
-    --linear-gain --normalize-scores zscore --tag-features --tag v5tax_tags
+python rerank_ltr.py     # defaults = shipped config (17 features, linear gain, per-gig z-scores)
 python tag_ablation.py   # the significance test
 ```
 
@@ -290,9 +289,7 @@ python rerank_crossencoder.py --mode finetune --data-dir data/data_set_v5 \
     --model Alibaba-NLP/gte-reranker-modernbert-base --tag v5ce_gte --epochs 2 --cv-folds 3 --max-length 768
 
 # 2) set-wise ranker -> results_data/data_set_v5_tax/listwise_ceil_s7.json
-python listwise_ranker_v2.py --loss pairwise --tag ceil_s7 \
-    --ce-tag v5ce_minilm --ce-tag-extra v5ce_bge --ce-tag-third v5ce_gte \
-    --soft-labels --d-model 64 --layers 2 --dropout 0.10 --seeds 7 --epochs 80
+python pro_ranker.py      # defaults = shipped config (3 CEs, d=64, 2 layers, dropout 0.10, 7 seeds, 80 epochs)
 ```
 
 Stage-1 ranked lists, the embedding cache and the skill-vector cache are git-ignored and
@@ -310,7 +307,9 @@ regenerate from the commands above.
   business re-weighting after ranking, or re-grade with constraint-aware relevance.
 - **Retraining Lightweight today gives ~0.8974, not 0.8982.** `candidates_top50.csv` now holds
   live budget/availability values, and `avail_immediacy` anchors "available now" to
-  `date.today()`, so it drifts daily. The committed model and results are the 0.8982 run.
+  `date.today()`, so it drifts daily. The committed model and results are the 0.8982 run. For
+  the same reason, re-running `tag_ablation.py` today gives the tags **+0.0170 NDCG@10
+  [+0.0127, +0.0214]** instead of the +0.0188 above — smaller, still clearly significant.
 - **The top-up grades were chosen by the tag rankers.** They cover every ungraded pair in the
   tag variants' top-10s, so they cannot favour the baseline; on other fold splits a few ungraded
   pairs remain (top-10 still ~99% graded). Even scoring every remaining ungraded pair against

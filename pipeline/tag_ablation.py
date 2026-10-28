@@ -93,16 +93,16 @@ def main():
     args = ap.parse_args()
 
     R.set_dataset(args.data_dir)
-    R.MODEL_PARAMS["ndcg_exp_gain"] = False                    # shipped: --linear-gain
+    # MODEL_PARAMS already uses linear gain (ndcg_exp_gain=False), as shipped
     gt = json.loads((BASE / args.data_dir / "ground_truth_llm.json").read_text())
     judged = json.loads((BASE / args.data_dir / "llm_judgments_merged.json").read_text())
     topup = load_topup()
     if not any(p in judged.get(h, {}) for h, p in topup):
         raise SystemExit("top-up grades are not merged -- run merge_topup_grades.py first")
 
-    rows, base_feats = R.load_candidates(50, None, tag_features=True)
+    rows, base_feats = R.load_candidates(50, tag_features=True)
     base_feats = [f for f in base_feats if f not in TAG_FEATURES]
-    R.normalize_by_query(rows, R.SCORE_FEATURES, "zscore")     # shipped: --normalize-scores zscore
+    R.normalize_by_query(rows, R.SCORE_FEATURES, "zscore")     # as shipped
     by_query = defaultdict(list)
     for r in rows:
         by_query[r["hire_id"]].append(r)

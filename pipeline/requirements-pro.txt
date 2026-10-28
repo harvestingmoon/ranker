@@ -1,0 +1,5 @@
+# Pro: cross-encoder fine-tuning and the set-wise ranker, on top of requirements.txt.
+#     pip install -r pipeline/requirements.txt -r pipeline/requirements-pro.txt
+# A CUDA build of torch is strongly recommended for rerank_crossencoder.py.
+datasets>=2.20                 # sentence-transformers Trainer API
+accelerate>=0.30               # ditto
