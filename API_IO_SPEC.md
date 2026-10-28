@@ -1,7 +1,7 @@
 # Recommendation API — aligned I/O
 
-Supersedes `api_sample_final.json`, which was generated from `pilot_tax.json` on a
-30-gig corpus and describes a `signals` block whose fields no longer exist.
+Supersedes the earlier `api_sample_*.json` contract (removed), which was generated on a
+30-gig pilot corpus and described a `signals` block whose fields no longer exist.
 
 Regenerate a live example at any time:
 
@@ -21,7 +21,7 @@ both** — a client switches tiers by changing one config value, never its parsi
 | tier | what runs | NDCG@10 | P@5 | MRR | servable |
 |---|---|---|---|---|---|
 | `lightweight` | BM25 + dense → RRF → LambdaMART (17 features) | **0.8982** | 0.8991 | 0.9774 | yes |
-| `pro` | same retrieval → 2 cross-encoders → set-wise transformer | **0.9508** | 0.9541 | 0.9940 | **no** |
+| `pro` | same retrieval → 3 cross-encoders → set-wise transformer | **0.9507** | 0.9544 | 0.9937 | **no** |
 
 Configs live in `configs/lightweight.json` and `configs/pro.json`; `pipeline/tier.py
 --check` asserts they still agree on the response shape and feature vector.
@@ -33,7 +33,7 @@ python pipeline/serve.py --hire-id 1 --tier pro   # exits with the blocking reas
 
 **`pro` has no serving artifact yet.** `listwise_ranker_v2.py` emits out-of-fold
 ranked lists only (it never calls `torch.save`), and its cross-encoder inputs are
-precomputed OOF CSVs rather than a live scorer. The 0.9508 is an offline evaluation,
+precomputed OOF CSVs rather than a live scorer. The 0.9507 (`listwise_ceil_s7.json`) is an offline evaluation,
 not a service. Serving it needs: fit on all queries + `torch.save`, a live CE pass
 over the candidate pool, and a response builder — the last one already exists in
 `serve.py` and can be reused verbatim.

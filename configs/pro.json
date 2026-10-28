@@ -1,11 +1,11 @@
 {
   "tier": "pro",
-  "summary": "Same retrieval, plus two cross-encoders and a set-wise transformer that scores all 50 candidates jointly instead of one at a time. ~0.95 NDCG@10.",
+  "summary": "Same retrieval, plus three fine-tuned cross-encoders and a set-wise transformer that scores all 50 candidates jointly instead of one at a time. ~0.95 NDCG@10.",
   "servable": false,
-  "blocked_on": "No serving artifact exists. listwise_ranker_v2.py produces out-of-fold ranked lists only (it never calls torch.save), and its two cross-encoder inputs are precomputed OOF CSVs (ce_scores_v5ce_bge.csv, ce_scores_v5ce_gte.csv), not a live scorer. Serving this tier needs three things: (1) fit the set-wise model on all queries and torch.save it, (2) run the cross-encoders live over the 50-candidate pool, (3) write the same response builder. Until then the 0.9508 is an offline evaluation, not a service.",
+  "blocked_on": "No serving artifact exists. listwise_ranker_v2.py produces out-of-fold ranked lists only (it never calls torch.save), and its three cross-encoder inputs are precomputed OOF CSVs (ce_scores_v5ce_minilm.csv, ce_scores_v5ce_bge.csv, ce_scores_v5ce_gte.csv), not a live scorer. Serving this tier needs three things: (1) fit the set-wise model on all queries and torch.save it, (2) run the cross-encoders live over the 50-candidate pool, (3) write the same response builder. Until then the 0.9507 is an offline evaluation, not a service.",
   "stages": [
     "retrieval (shared with lightweight: BM25 + dense -> RRF -> 50 candidates)",
-    "cross-encoder pass x2 (v5ce_bge, v5ce_gte)",
+    "cross-encoder pass x3 (v5ce_minilm, v5ce_bge, v5ce_gte)",
     "set-wise transformer over the full 50-candidate set (listwise_ranker_v2.py)"
   ],
   "retrieval": {
@@ -43,10 +43,10 @@
     "avail_immediacy"
   ],
   "sota": {
-    "ndcg@10": 0.9508,
-    "precision@5": 0.9541,
-    "mrr": 0.994,
-    "artifact": "results_data/data_set_v5_tax/listwise_struct.json",
+    "ndcg@10": 0.9507,
+    "precision@5": 0.9544,
+    "mrr": 0.9937,
+    "artifact": "results_data/data_set_v5_tax/listwise_ceil_s7.json",
     "measured": "out-of-fold, GroupKFold by query, 1,106 queries"
   },
   "response": {
