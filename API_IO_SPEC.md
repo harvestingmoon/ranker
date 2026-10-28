@@ -6,7 +6,7 @@ Supersedes the earlier `api_sample_*.json` contract (removed), which was generat
 Regenerate a live example at any time:
 
 ```bash
-python pipeline/api_io_example.py --hire-id 1 --top-k 10
+python -m pipeline.serving.api_io_example --hire-id 1 --top-k 10
 ```
 
 It scores with the saved model, so the numbers in the output are real.
@@ -23,12 +23,12 @@ both** — a client switches tiers by changing one config value, never its parsi
 | `lightweight` | BM25 + dense → RRF → LambdaMART (17 features) | **0.8982** | 0.8991 | 0.9774 | yes |
 | `pro` | same retrieval → 3 cross-encoders → set-wise transformer | **0.9507** | 0.9544 | 0.9937 | **no** |
 
-Configs live in `configs/lightweight.json` and `configs/pro.json`; `pipeline/tier.py
+Configs live in `configs/lightweight.json` and `configs/pro.json`; `pipeline/serving/tier.py
 --check` asserts they still agree on the response shape and feature vector.
 
 ```bash
-python pipeline/serve.py --hire-id 1 --tier lightweight
-python pipeline/serve.py --hire-id 1 --tier pro   # exits with the blocking reason
+python -m pipeline.serving.serve --hire-id 1 --tier lightweight
+python -m pipeline.serving.serve --hire-id 1 --tier pro   # exits with the blocking reason
 ```
 
 **`pro` has no serving artifact yet.** `pro_ranker.py` emits out-of-fold

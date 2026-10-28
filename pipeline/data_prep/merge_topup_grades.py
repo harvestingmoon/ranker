@@ -21,16 +21,17 @@ Idempotent: a pair that already carries a grade is never overwritten, so rerunni
 no-op. The top-up file stays the record of which grades were added, so the original
 label set is always `merged minus top-up` (tag_ablation.py relies on this).
 
-    python pipeline/merge_topup_grades.py --data-dir data/data_set_v5
-    python pipeline/merge_topup_grades.py --data-dir data/data_set_v5_tax
+    python -m pipeline.data_prep.merge_topup_grades --data-dir data/data_set_v5
+    python -m pipeline.data_prep.merge_topup_grades --data-dir data/data_set_v5_tax
 """
 import argparse
 import csv
 import json
 from collections import Counter
 from pathlib import Path
+from pipeline.common.paths import PIPELINE
 
-BASE = Path(__file__).parent
+BASE = PIPELINE
 TOPUP = BASE / "data/data_set_v5/judgments_topup_tags.jsonl"
 
 

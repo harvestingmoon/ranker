@@ -17,11 +17,12 @@ from pathlib import Path
 
 from rank_bm25 import BM25Okapi
 
-from corpus import (
+from pipeline.common.corpus import (
     provider_text, tokenize, provider_bm25_tokens, hirer_bm25_tokens, simple_stem,
 )
+from pipeline.common.paths import PIPELINE
 
-SYNONYMS_PATH = Path(__file__).parent / "data" / "synonyms.json"
+SYNONYMS_PATH = PIPELINE / "data" / "synonyms.json"
 
 
 def _load_stemmed_synonyms() -> dict[str, list[str]]:

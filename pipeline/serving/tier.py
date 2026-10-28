@@ -4,14 +4,15 @@ Both tiers answer the SAME request and return the SAME response shape
 (API_IO_SPEC.md) — only the model behind the rankings differs, so a client
 switches tiers without touching its parsing code.
 
-    python pipeline/tier.py --check          # assert tier parity + model files exist
-    python pipeline/tier.py --show pro       # dump one tier's config
+    python -m pipeline.serving.tier --check          # assert tier parity + model files exist
+    python -m pipeline.serving.tier --show pro       # dump one tier's config
 """
 import argparse
 import json
 from pathlib import Path
+from pipeline.common.paths import PIPELINE
 
-BASE = Path(__file__).parent
+BASE = PIPELINE
 CONFIG_DIR = BASE.parent / "configs"
 TIERS = ("lightweight", "pro")
 

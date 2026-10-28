@@ -5,8 +5,8 @@ This is the piece that was missing. api_io_example.py only re-read precomputed
 CSVs, so it worked for the 1,106 gigs already in the corpus and failed
 immediately on anything else. This runs the actual pipeline for an arbitrary gig.
 
-    python pipeline/serve.py --hire-id 1                 # a corpus gig (control)
-    python pipeline/serve.py --gig-json request.json     # any gig, including new
+    python -m pipeline.serving.serve --hire-id 1                 # a corpus gig (control)
+    python -m pipeline.serving.serve --gig-json request.json     # any gig, including new
 
 First run embeds 3,024 providers (~1-2 min) and caches to cache_data/. Later runs
 reuse the cache.
@@ -25,15 +25,16 @@ from pathlib import Path
 import numpy as np
 import xgboost as xgb
 
-from corpus import hirer_text, provider_text
-from rerank_ltr import DEFAULT_FEATURES, SCORE_FEATURES, normalize_by_query
-from retrieval_bm25 import BM25Retriever
-from retrieval_dense import encode_docs, encode_queries, rank_from_raw
-from retrieval_rrf import rrf_fuse
-from tag_features import TAG_FEATURES, TagMatcher, embed_skills, tag_axes
-from tier import load_tier
+from pipeline.common.corpus import hirer_text, provider_text
+from pipeline.lightweight.rerank_ltr import DEFAULT_FEATURES, SCORE_FEATURES, normalize_by_query
+from pipeline.recall.retrieval_bm25 import BM25Retriever
+from pipeline.recall.retrieval_dense import encode_docs, encode_queries, rank_from_raw
+from pipeline.recall.retrieval_rrf import rrf_fuse
+from pipeline.features.tag_features import TAG_FEATURES, TagMatcher, embed_skills, tag_axes
+from pipeline.serving.tier import load_tier
+from pipeline.common.paths import PIPELINE
 
-BASE = Path(__file__).parent
+BASE = PIPELINE
 DATA = BASE / "data" / "data_set_v5_tax"
 CACHE = BASE / "cache_data" / "data_set_v5_tax"
 

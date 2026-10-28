@@ -1,5 +1,9 @@
 # Ablation — Stage-1 retrieval and Stage-2 re-ranking
 
+> **Historical record.** The commands and script names below predate the repo's reorganisation
+> into stage folders (and some scripts were since removed); see the README for current commands,
+> and tag `pre-cleanup` for the code as it was.
+
 **Corpus:** `pipeline/data/data_set_v5` — 1,106 gig queries, 3,024 provider showcases,
 **21,696 LLM-graded pairs**, graded 0–3 by `qwen3.8:27b` on prompt `rubric_01.v5`
 (0: 28.1% · 1: 10.5% · 2: 44.6% · 3: 16.9%). Relevance for P/R/MRR is **grade ≥ 2**,

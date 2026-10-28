@@ -147,14 +147,14 @@ cross-encoder (0.9506), live budget/availability/seniority features (0.9508, fla
 ## Serving
 
 Both tiers emit the **same request/response shape**, so a client switches tier by changing one
-config value. `pipeline/tier.py --check` asserts the two configs agree.
+config value. `pipeline/serving/tier.py --check` asserts the two configs agree.
 
 ```bash
-cd pipeline
-python serve.py --tier lightweight --hire-id 1 --top-k 10   # live: retrieval → features → model
-python serve.py --tier lightweight --gig-json request.json  # any gig, including a new one
-python serve.py --tier pro --hire-id 1                      # exits with the blocking reason
-python tier.py --check
+# from the repo root
+python -m pipeline.serving.serve --tier lightweight --hire-id 1 --top-k 10   # live: retrieval → features → model
+python -m pipeline.serving.serve --tier lightweight --gig-json request.json  # any gig, including a new one
+python -m pipeline.serving.serve --tier pro --hire-id 1                      # exits with the blocking reason
+python -m pipeline.serving.tier --check
 ```
 
 **Pro is not servable yet.** `pro_ranker.py` writes out-of-fold ranked lists only (it
@@ -230,23 +230,35 @@ Full history of variants tried, including rejected ones: [`ablation.md`](ablatio
 
 ![Code flow](figures/code_flow.svg)
 
-| Path | Tier | What |
+Run every script from the repo root as a module, e.g. `python -m pipeline.lightweight.rerank_ltr`.
+Data paths resolve against `pipeline/` (`common/paths.py`), so `--data-dir data/<corpus>` works
+from anywhere.
+
+```
+pipeline/
+├── common/        corpus.py · evaluate.py · paths.py
+├── data_prep/     enrich_v5_with_tags.py · merge_topup_grades.py
+├── recall/        run_pipeline.py · retrieval_bm25.py · retrieval_dense.py · retrieval_rrf.py
+├── features/      features.py · tag_features.py
+├── lightweight/   rerank_ltr.py
+├── pro/           rerank_crossencoder.py · pro_features.py · pro_ranker.py
+├── serving/       serve.py · tier.py · api_io_example.py
+├── evaluation/    tag_ablation.py · paired_bootstrap.py
+└── data/ · features_data/ · models_data/ · results_data/ · cache_data/
+```
+
+| Folder / file | Tier | What |
 |---|---|---|
 | `configs/lightweight.json`, `configs/pro.json` | both | Tier definitions: model, retrieval settings, feature order, headline numbers |
-| `pipeline/tier.py` | both | Loads a tier config; `--check` asserts both tiers share one response contract |
-| `pipeline/data/data_set_v5/`, `data_set_v5_tax/` | both | Corpus and labels (see [Data](#data)) |
-| `pipeline/enrich_v5_with_tags.py` | both | Builds `data_set_v5_tax` from `data_set_v5` + the mcjuh `sf_v1` tags (one-off) |
-| `pipeline/merge_topup_grades.py` | both | Folds the top-up grades into a corpus's label files (idempotent) |
-| `pipeline/run_pipeline.py`, `retrieval_*.py`, `corpus.py` | both | Stage 1: refined BM25, mxbai dense, RRF |
-| `pipeline/features.py` | both | Builds `features_data/<corpus>/candidates_top50.csv` (top-50 pool + retrieval/structured features + labels) |
-| `pipeline/tag_features.py` | both | Builds `tag_features.csv`, the 8 tag features (own process — torch) |
-| `pipeline/evaluate.py` | both | P@K / R@K / NDCG@K / MRR |
-| `pipeline/rerank_ltr.py` | Lightweight | LambdaMART training + OOF evaluation → `v5tax_tags_xgb.json`, `v5tax_tags.json` |
-| `pipeline/serve.py`, `api_io_example.py` | Lightweight | Live serving path and I/O example generator |
-| `pipeline/rerank_crossencoder.py` | Pro | Cross-encoder OOF fine-tune → `features_data/data_set_v5/ce_scores_v5ce_{minilm,bge,gte}.csv` |
-| `pipeline/pro_features.py` | Pro | The 37-feature vector (base + taxonomy graph + interactions + provider prior + CE scores / ranks) and the continuous labels |
-| `pipeline/pro_ranker.py` | Pro | Set-wise transformer, OOF training → `listwise_ceil_s7.json` |
-| `pipeline/tag_ablation.py`, `paired_bootstrap.py` | evidence | The tags-vs-no-tags significance test and bootstrap helper |
+| `pipeline/common/` | both | `corpus.py` (record → text / BM25 tokens), `evaluate.py` (P@K, R@K, NDCG@K, MRR), `paths.py` (where the data lives) |
+| `pipeline/data_prep/` | both | One-off: `enrich_v5_with_tags.py` builds `data_set_v5_tax` from `data_set_v5` + the mcjuh `sf_v1` tags; `merge_topup_grades.py` folds the top-up grades into the label files (idempotent) |
+| `pipeline/recall/` | both | Stage 1: `retrieval_bm25.py`, `retrieval_dense.py`, `retrieval_rrf.py`, driven by `run_pipeline.py` |
+| `pipeline/features/` | both | `features.py` → `candidates_top50.csv` (top-50 pool + retrieval/structured features + labels); `tag_features.py` → `tag_features.csv` (8 tag features; own process — torch) |
+| `pipeline/lightweight/` | Lightweight | `rerank_ltr.py`: LambdaMART training + OOF evaluation → `v5tax_tags_xgb.json`, `v5tax_tags.json` |
+| `pipeline/pro/` | Pro | `rerank_crossencoder.py` (cross-encoder OOF fine-tune → `ce_scores_v5ce_*.csv`), `pro_features.py` (the 37 features + continuous labels), `pro_ranker.py` (set-wise transformer → `listwise_ceil_s7.json`) |
+| `pipeline/serving/` | Lightweight (Pro planned) | `serve.py` (live path), `tier.py` (loads a config; `--check` keeps both tiers' responses aligned), `api_io_example.py` (I/O example generator) |
+| `pipeline/evaluation/` | evidence | `tag_ablation.py` (tags-vs-no-tags significance test) and `paired_bootstrap.py` |
+| `pipeline/data/` | both | Corpus and labels (see [Data](#data)) |
 | `pipeline/features_data/`, `models_data/`, `results_data/` | — | Feature tables, trained models, out-of-fold ranked lists. Only tier artifacts and the lists behind the significance tests are kept; earlier experiment outputs and scripts are in git history (tag `pre-cleanup`) |
 | `figures/` | — | `architecture` and `code_flow` diagrams: TikZ source (`.tex`) + `.pdf` / `.svg` / `.png`; rebuild with `figures/build.sh` |
 
@@ -255,17 +267,17 @@ Full history of variants tried, including rejected ones: [`ablation.md`](ablatio
 ```bash
 pip install -r pipeline/requirements.txt                                  # Lightweight
 pip install -r pipeline/requirements.txt -r pipeline/requirements-pro.txt  # Pro
-cd pipeline
+# every command below runs from the repo root
 ```
 
 **Shared — Stage 1, features, labels**
 
 ```bash
-python run_pipeline.py --data-dir data/data_set_v5_tax
-python features.py     --data-dir data/data_set_v5_tax
-python merge_topup_grades.py --data-dir data/data_set_v5_tax   # no-op on the committed files
+python -m pipeline.recall.run_pipeline          --data-dir data/data_set_v5_tax
+python -m pipeline.features.features            --data-dir data/data_set_v5_tax
+python -m pipeline.data_prep.merge_topup_grades --data-dir data/data_set_v5_tax   # no-op on the committed files
 # own process: torch + xgboost in one process segfaults on macOS
-python tag_features.py --data-dir data/data_set_v5_tax
+python -m pipeline.features.tag_features        --data-dir data/data_set_v5_tax
 ```
 
 **Lightweight** (CPU, minutes)
@@ -273,23 +285,23 @@ python tag_features.py --data-dir data/data_set_v5_tax
 ```bash
 # OOF lists -> results_data/data_set_v5_tax/v5tax_tags.json
 # full-data model -> models_data/data_set_v5_tax/v5tax_tags_xgb.json
-python rerank_ltr.py     # defaults = shipped config (17 features, linear gain, per-gig z-scores)
-python tag_ablation.py   # the significance test
+python -m pipeline.lightweight.rerank_ltr    # defaults = shipped config (17 features, linear gain, per-gig z-scores)
+python -m pipeline.evaluation.tag_ablation   # the significance test
 ```
 
 **Pro** (GPU; ~20–60 min per cross-encoder on an H100)
 
 ```bash
 # 1) cross-encoder OOF scores
-python rerank_crossencoder.py --mode finetune --data-dir data/data_set_v5 \
+python -m pipeline.pro.rerank_crossencoder --mode finetune --data-dir data/data_set_v5 \
     --model cross-encoder/ms-marco-MiniLM-L6-v2 --tag v5ce_minilm --epochs 3 --cv-folds 5
-python rerank_crossencoder.py --mode finetune --data-dir data/data_set_v5 \
+python -m pipeline.pro.rerank_crossencoder --mode finetune --data-dir data/data_set_v5 \
     --model BAAI/bge-reranker-v2-m3 --tag v5ce_bge --epochs 2 --cv-folds 3 --max-length 512
-python rerank_crossencoder.py --mode finetune --data-dir data/data_set_v5 \
+python -m pipeline.pro.rerank_crossencoder --mode finetune --data-dir data/data_set_v5 \
     --model Alibaba-NLP/gte-reranker-modernbert-base --tag v5ce_gte --epochs 2 --cv-folds 3 --max-length 768
 
 # 2) set-wise ranker -> results_data/data_set_v5_tax/listwise_ceil_s7.json
-python pro_ranker.py      # defaults = shipped config (3 CEs, d=64, 2 layers, dropout 0.10, 7 seeds, 80 epochs)
+python -m pipeline.pro.pro_ranker      # defaults = shipped config (3 CEs, d=64, 2 layers, dropout 0.10, 7 seeds, 80 epochs)
 ```
 
 Stage-1 ranked lists, the embedding cache and the skill-vector cache are git-ignored and

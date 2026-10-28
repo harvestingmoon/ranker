@@ -17,7 +17,7 @@ Loss: pairwise logistic weighted by |gain_i - gain_j|, on the grader's continuou
 Needs the three cross-encoder OOF score files from rerank_crossencoder.py.
 The defaults are the shipped configuration (0.9507 NDCG@10):
 
-    python pipeline/pro_ranker.py
+    python -m pipeline.pro.pro_ranker
 
 Writes results_data/<corpus>/listwise_<tag>.json (OOF ranked lists). No model is
 saved yet, so Pro has no serving path.
@@ -31,9 +31,9 @@ import torch
 import torch.nn as nn
 from sklearn.model_selection import GroupKFold, KFold
 
-import evaluate as E
-import pro_features as P
-import rerank_ltr as R
+from pipeline.common import evaluate as E
+from pipeline.pro import pro_features as P
+from pipeline.lightweight import rerank_ltr as R
 
 GAIN = {0: 0.0, 1: 33.0, 2: 67.0, 3: 100.0}
 

@@ -12,7 +12,7 @@ tag_features.py), and trains XGBoost `rank:ndcg` on the 17 features below.
   reported metrics and the written ranked lists are out-of-fold (OOF).
 - A final model is then fit on all gigs and saved for serving.
 
-    python pipeline/rerank_ltr.py --data-dir data/data_set_v5_tax --tag v5tax_tags
+    python -m pipeline.lightweight.rerank_ltr --data-dir data/data_set_v5_tax --tag v5tax_tags
 
 Writes results_data/<corpus>/<tag>.json (OOF ranked lists) and
 models_data/<corpus>/<tag>_xgb.json (serving model, read by serve.py).
@@ -27,10 +27,11 @@ import numpy as np
 import xgboost as xgb
 from sklearn.model_selection import GroupKFold
 
-from evaluate import evaluate_all_hirers
-from tag_features import TAG_FEATURES
+from pipeline.common.evaluate import evaluate_all_hirers
+from pipeline.features.tag_features import TAG_FEATURES
+from pipeline.common.paths import PIPELINE
 
-BASE = Path(__file__).parent
+BASE = PIPELINE
 DATA_DIR = BASE / "data"
 FEAT_DIR = BASE / "features_data"
 RESULTS_DIR = BASE / "results_data"
@@ -112,7 +113,7 @@ def load_candidates(top_k: int = 50, tag_features: bool = True):
     """Candidate rows with their feature values as floats; returns (rows, feature names)."""
     path = FEAT_DIR / f"candidates_top{top_k}.csv"
     if not path.exists():
-        raise SystemExit(f"{path} not found -- run `python pipeline/features.py` first")
+        raise SystemExit(f"{path} not found -- run `python -m pipeline.features.features` first")
     rows = list(csv.DictReader(path.open()))
 
     features = list(DEFAULT_FEATURES)
@@ -122,7 +123,7 @@ def load_candidates(top_k: int = 50, tag_features: bool = True):
         tf_path = FEAT_DIR / "tag_features.csv"
         if not tf_path.exists():
             raise SystemExit(f"{tf_path} not found -- build it with "
-                             f"`python pipeline/tag_features.py --data-dir {DATA_DIR.relative_to(BASE)}`")
+                             f"`python -m pipeline.features.tag_features --data-dir {DATA_DIR.relative_to(BASE)}`")
         tf = {(r["hire_id"], r["provider_id"]): r for r in csv.DictReader(tf_path.open())}
         missing = [r for r in rows if (r["hire_id"], r["provider_id"]) not in tf]
         if missing:

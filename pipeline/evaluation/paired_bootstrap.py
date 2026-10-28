@@ -5,7 +5,7 @@ run a paired bootstrap between them.
 Discovers systems from the directory rather than hardcoding paths, so it works for
 any corpus (data_pilot, data_all, ...) as soon as the run produces files.
 
-Usage: python paired_bootstrap.py --tag data_all [--baseline rrf_k60.json]
+Usage: python -m pipeline.evaluation.paired_bootstrap --tag data_all [--baseline rrf_k60.json]
 """
 import argparse
 import json
@@ -13,9 +13,10 @@ from pathlib import Path
 
 import numpy as np
 
-from evaluate import evaluate_all_hirers
+from pipeline.common.evaluate import evaluate_all_hirers
+from pipeline.common.paths import PIPELINE
 
-BASE = Path(__file__).parent
+BASE = PIPELINE
 METRICS = ("precision@5", "recall@10", "ndcg@10", "mrr")
 
 
@@ -61,7 +62,7 @@ def main():
         print(f"{n:<26}" + "".join(f"{scored[n][m]:>11.4f}" for m in METRICS))
 
     # per-query vectors for the paired test
-    from evaluate import ndcg_at_k, precision_at_k, reciprocal_rank
+    from pipeline.common.evaluate import ndcg_at_k, precision_at_k, reciprocal_rank
     per = {n: {h: {
         "precision@5": precision_at_k(r.get(h, []), gt.get(h, {}), 5),
         "ndcg@10": ndcg_at_k(r.get(h, []), gt.get(h, {}), 10),

@@ -32,7 +32,7 @@ Writes features_data/<corpus>/tag_features.csv for every row of candidates_top50
 Run it as its own process -- it loads torch, and torch + xgboost in one process
 segfaults on macOS (OpenMP runtime clash); rerank_ltr.py only reads the CSV.
 
-    python pipeline/tag_features.py --data-dir data/data_set_v5_tax
+    python -m pipeline.features.tag_features --data-dir data/data_set_v5_tax
 """
 import argparse
 import csv
@@ -42,8 +42,9 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
+from pipeline.common.paths import PIPELINE
 
-BASE = Path(__file__).parent
+BASE = PIPELINE
 TAG_FEATURES = ["tag_level", "has_tags_gig", "has_tags_prov", "cat_any", "spec_cov",
                 "skill_cov", "skill_idf_cov", "skill_soft"]
 SKILL_MODEL = "mixedbread-ai/mxbai-embed-large-v1"

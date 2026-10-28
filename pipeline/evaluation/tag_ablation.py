@@ -19,9 +19,9 @@ Every number is out-of-fold. Split 0 is rerank_ltr.py's GroupKFold; the others a
 shuffled 5-fold splits, so an effect has to replicate across fold assignments.
 Paired bootstrap over queries, 10k resamples.
 
-    python pipeline/merge_topup_grades.py --data-dir data/data_set_v5_tax   # once
-    python pipeline/tag_features.py       --data-dir data/data_set_v5_tax   # separate process
-    python pipeline/tag_ablation.py
+    python -m pipeline.data_prep.merge_topup_grades --data-dir data/data_set_v5_tax   # once
+    python -m pipeline.features.tag_features       --data-dir data/data_set_v5_tax   # separate process
+    python -m pipeline.evaluation.tag_ablation
 """
 import argparse
 import json
@@ -32,12 +32,13 @@ import numpy as np
 import xgboost as xgb
 from sklearn.model_selection import GroupKFold, KFold
 
-import evaluate as E
-import rerank_ltr as R
-from merge_topup_grades import load_topup
-from tag_features import TAG_FEATURES
+from pipeline.common import evaluate as E
+from pipeline.lightweight import rerank_ltr as R
+from pipeline.data_prep.merge_topup_grades import load_topup
+from pipeline.features.tag_features import TAG_FEATURES
+from pipeline.common.paths import PIPELINE
 
-BASE = Path(__file__).parent
+BASE = PIPELINE
 METRICS = ["ndcg@10", "ndcg@5", "p@5", "p@10", "r@10", "mrr", "judged@10"]
 
 

@@ -35,8 +35,8 @@ features that are absent (or constant) at serve time.
 
 Run (from the repo root, in the fi-bench env):
     conda activate fi-bench
-    python pipeline/features.py --top-k 50
-    python pipeline/features.py --top-k 50 --data-dir data_sat
+    python -m pipeline.features.features --top-k 50
+    python -m pipeline.features.features --top-k 50 --data-dir data_sat
 """
 import argparse
 import csv
@@ -46,12 +46,13 @@ from pathlib import Path
 
 import numpy as np
 
-from corpus import provider_text, hirer_text
-from retrieval_bm25 import BM25Retriever
-from retrieval_dense import encode_docs, encode_queries, rank_from_raw, BASE_MODEL_NAME
-from retrieval_rrf import rrf_fuse
+from pipeline.common.corpus import provider_text, hirer_text
+from pipeline.recall.retrieval_bm25 import BM25Retriever
+from pipeline.recall.retrieval_dense import encode_docs, encode_queries, rank_from_raw, BASE_MODEL_NAME
+from pipeline.recall.retrieval_rrf import rrf_fuse
+from pipeline.common.paths import PIPELINE
 
-BASE = Path(__file__).parent
+BASE = PIPELINE
 DATA_DIR = BASE / "data"
 FEAT_DIR = BASE / "features"
 CACHE_DIR = BASE / "cache"

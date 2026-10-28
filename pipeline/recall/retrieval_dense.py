@@ -17,7 +17,7 @@ format and loads identically.
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from corpus import provider_text, hirer_text
+from pipeline.common.corpus import provider_text, hirer_text
 
 BASE_MODEL_NAME = "mixedbread-ai/mxbai-embed-large-v1"
 DEFAULT_TRUNCATE_DIM = 256

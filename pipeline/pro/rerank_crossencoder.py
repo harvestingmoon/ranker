@@ -24,9 +24,9 @@ GPU notes (RTX 3060 Laptop, 6 GB):
     embedding fine-tune (see finetune_embeddings.py).
 
 Run (fi-bench env, from the repo root):
-    python pipeline/rerank_crossencoder.py --mode score
-    python pipeline/rerank_crossencoder.py --mode score --model BAAI/bge-reranker-v2-m3 --fp16 --tag bge
-    python pipeline/rerank_crossencoder.py --mode finetune --model cross-encoder/ms-marco-MiniLM-L6-v2
+    python -m pipeline.pro.rerank_crossencoder --mode score
+    python -m pipeline.pro.rerank_crossencoder --mode score --model BAAI/bge-reranker-v2-m3 --fp16 --tag bge
+    python -m pipeline.pro.rerank_crossencoder --mode finetune --model cross-encoder/ms-marco-MiniLM-L6-v2
 """
 import argparse
 import csv
@@ -40,10 +40,11 @@ from sentence_transformers import CrossEncoder, InputExample
 from sklearn.model_selection import GroupKFold
 from torch.utils.data import DataLoader
 
-from corpus import provider_text, hirer_text
-from evaluate import evaluate_all_hirers
+from pipeline.common.corpus import provider_text, hirer_text
+from pipeline.common.evaluate import evaluate_all_hirers
+from pipeline.common.paths import PIPELINE
 
-BASE = Path(__file__).parent
+BASE = PIPELINE
 DATA_DIR = BASE / "data"
 FEAT_DIR = BASE / "features"
 RESULTS_DIR = BASE / "results"
@@ -110,7 +111,7 @@ def rerank_lists(meta, scores, rrf_full):
 def score(args):
     cand_path = FEAT_DIR / f"candidates_top{args.top_k}.csv"
     if not cand_path.exists():
-        raise SystemExit(f"{cand_path} not found -- run `python pipeline/features.py --top-k {args.top_k}` first")
+        raise SystemExit(f"{cand_path} not found -- run `python -m pipeline.features.features --top-k {args.top_k}` first")
 
     rows = list(csv.DictReader(cand_path.open()))
     providers_by_id = {p["provider_id"]: p for p in load_json(DATA_DIR / "providers.json")}

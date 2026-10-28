@@ -18,7 +18,7 @@ Note the committed results artifact (v5tax_tags.json) holds OUT-OF-FOLD rankings
 -- each gig scored by a model that did not train on it -- while v5tax_tags_xgb.json
 is the all-data serving model. They cannot match exactly, and that is correct.
 
-    python pipeline/api_io_example.py --hire-id 1 --top-k 10
+    python -m pipeline.serving.api_io_example --hire-id 1 --top-k 10
 """
 import argparse
 import csv
@@ -28,10 +28,11 @@ from pathlib import Path
 
 import xgboost as xgb
 
-from rerank_ltr import DEFAULT_FEATURES, SCORE_FEATURES, normalize_by_query
-from tag_features import TAG_FEATURES
+from pipeline.lightweight.rerank_ltr import DEFAULT_FEATURES, SCORE_FEATURES, normalize_by_query
+from pipeline.features.tag_features import TAG_FEATURES
+from pipeline.common.paths import PIPELINE
 
-BASE = Path(__file__).parent
+BASE = PIPELINE
 DATA = BASE / "data" / "data_set_v5_tax"
 FEAT = BASE / "features_data" / "data_set_v5_tax"
 MODEL = BASE / "models_data" / "data_set_v5_tax" / "v5tax_tags_xgb.json"

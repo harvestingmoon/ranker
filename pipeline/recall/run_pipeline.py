@@ -9,22 +9,23 @@ Keeps the slow steps (embedding all provider/hirer text, once per model
 variant) to a single pass each here, so the notebook's metric/tuning sweeps
 stay fast.
 
-Run: python3 pipeline/run_pipeline.py
+Run: python -m pipeline.recall.run_pipeline
 """
 import argparse
 import json
 import time
 from pathlib import Path
 
-from corpus import provider_text, hirer_text
-from retrieval_bm25 import BM25Retriever
-from retrieval_dense import (
+from pipeline.common.corpus import provider_text, hirer_text
+from pipeline.recall.retrieval_bm25 import BM25Retriever
+from pipeline.recall.retrieval_dense import (
     encode_docs, encode_queries, rank_from_raw,
     BASE_MODEL_NAME, QUERY_PREFIX_GENERIC, QUERY_PREFIX_DOMAIN,
 )
-from retrieval_rrf import rrf_fuse
+from pipeline.recall.retrieval_rrf import rrf_fuse
+from pipeline.common.paths import PIPELINE
 
-BASE = Path(__file__).parent
+BASE = PIPELINE
 DATA_DIR = BASE / "data"
 RESULTS_DIR = BASE / "results"
 MODELS_DIR = BASE / "models"

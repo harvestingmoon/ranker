@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-import rerank_ltr as R
+from pipeline.lightweight import rerank_ltr as R
 
 GRAPH_FEATURES = ["skill_sib_cov", "skill_cat_cov", "graph_dist_mean", "graph_dist_min",
                   "spec_cat_cov", "skill_jaccard"]

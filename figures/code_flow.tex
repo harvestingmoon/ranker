@@ -39,15 +39,15 @@
 \draw[arr] (v5) -- (enrich);
 \draw[arr] (enrich) -- (topup);
 \draw[arr] (topup) -- (tax);
-\node[stage, above=3mm of v5] (s0) {0 $\cdot$ data (one-off)};
+\node[stage, above=3mm of v5] (s0) {0 $\cdot$ \texttt{data\_prep/} (one-off)};
 
 % ---------------- 1. stage 1 ----------------
 \node[script, right=14mm of enrich] (run) {run\_pipeline.py};
-\node[sub, below=1mm of run] (runsub) {corpus.py $\cdot$ retrieval\_bm25.py\\retrieval\_dense.py $\cdot$ retrieval\_rrf.py};
+\node[sub, below=1mm of run] (runsub) {common/corpus.py $\cdot$ retrieval\_bm25.py\\retrieval\_dense.py $\cdot$ retrieval\_rrf.py};
 \node[file, below=6mm of runsub] (rrf) {rrf\_k60.json\\(git-ignored)};
 \draw[arr] (tax.east) -- ++(5mm,0) |- (run.west);
 \draw[arr] (runsub) -- (rrf);
-\node[stage] at (s0 -| run) {1 $\cdot$ recall};
+\node[stage] at (s0 -| run) {1 $\cdot$ \texttt{recall/}};
 
 % ---------------- 2. features ----------------
 \node[script, right=14mm of run] (feat) {features.py};
@@ -58,7 +58,7 @@
 \draw[arr] (feat) -- (cand);
 \draw[arr] (cand) -- (tagf);
 \draw[arr] (tagf) -- (tagcsv);
-\node[stage] at (s0 -| feat) {2 $\cdot$ features};
+\node[stage] at (s0 -| feat) {2 $\cdot$ \texttt{features/}};
 
 \begin{scope}[on background layer]
   \node[lane=shared, fit=(s0)(v5)(tax)(run)(rrf)(feat)(tagcsv)] (sh) {};
@@ -76,8 +76,8 @@
 \draw[arr] (ltr.south) |- (loof.west);
 \draw[arr] (lmodel) -- (serve);
 \draw[arr] (serve) -- (resp);
-\node[stage, above=3mm of ltr] (s3) {3 $\cdot$ re-rank};
-\node[stage] at (s3 -| serve) {4 $\cdot$ serve};
+\node[stage, above=3mm of ltr] (s3) {3 $\cdot$ \texttt{lightweight/}};
+\node[stage] at (s3 -| serve) {4 $\cdot$ \texttt{serving/}};
 \begin{scope}[on background layer]
   \node[lane=light, fit=(s3)(ltr)(lmodel)(loof)(serve)(resp)] (lw) {};
 \end{scope}
@@ -98,7 +98,7 @@
 \begin{scope}[on background layer]
   \node[lane=pro, fit=(ce)(cesub)(cecsv)(pfeat)(pfsub)(pr)(poof)] (pl) {};
 \end{scope}
-\node[lanelabel=pro, anchor=south west] at (pl.north west) {Pro (GPU) --- no serving path yet};
+\node[lanelabel=pro, anchor=south west] at (pl.north west) {Pro (GPU) --- \texttt{pro/} --- no serving path yet};
 
 % feature tables feed both tiers
 \draw[arr] (cand.east) -- ++(6mm,0) |- (ltr.west);
@@ -107,16 +107,16 @@
 \draw[arr] (tagcsv.east) -- ++(6mm,0) |- (pfeat.west);
 
 % ---------------- cross-cutting ----------------
-\node[script, below=12mm of pl.south west, anchor=north west] (eval) {evaluate.py};
+\node[script, below=12mm of pl.south west, anchor=north west] (eval) {common/evaluate.py};
 \node[sub, right=2mm of eval, anchor=west, align=left] (evsub) {NDCG / P / R / MRR, used by every step};
-\node[script, right=6mm of evsub] (tier) {tier.py};
+\node[script, right=6mm of evsub] (tier) {serving/tier.py};
 \node[sub, right=2mm of tier, anchor=west, align=left] (tsub) {loads configs/*.json;\\\texttt{-{}-check}: same response shape};
-\node[script, right=6mm of tsub] (abl) {tag\_ablation.py};
+\node[script, right=6mm of tsub] (abl) {evaluation/tag\_ablation.py};
 \node[sub, right=2mm of abl, anchor=west, align=left] (asub) {+ paired\_bootstrap.py:\\significance tests};
 \begin{scope}[on background layer]
   \node[lane=muted, fit=(eval)(evsub)(tier)(tsub)(abl)(asub)] (cc) {};
 \end{scope}
-\node[lanelabel=muted, anchor=south west] at (cc.north west) {Used across tiers};
+\node[lanelabel=muted, anchor=south west] at (cc.north west) {Used across tiers --- run every script from the repo root: \texttt{python -m pipeline.<folder>.<script>}};
 
 \end{tikzpicture}
 \end{document}
