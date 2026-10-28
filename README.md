@@ -25,7 +25,6 @@ tier by changing one config value. They differ only in the Stage-2 re-ranker:
 | P@5 / P@10 | 0.8991 / 0.8304 | 0.9544 / 0.8898 |
 | R@10 / MRR | 0.6449 / 0.9774 | 0.6982 / 0.9937 |
 | Hardware | CPU | GPU (cross-encoders) |
-| Servable today | **yes** — `serve.py --tier lightweight` | **no** — offline evaluation only (see [Serving](#serving)) |
 | Config | `configs/lightweight.json` | `configs/pro.json` |
 | Artifact | `models_data/data_set_v5_tax/v5tax_tags_xgb.json` | `results_data/data_set_v5_tax/listwise_ceil_s7.json` (OOF lists) |
 
