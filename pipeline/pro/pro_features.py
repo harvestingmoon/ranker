@@ -37,6 +37,9 @@ def load_index(data_dir: Path):
     sk2spec, sk2cat = defaultdict(set), defaultdict(set)
 
     def axes(rec):
+        """Unpack a record's sf_v1 tags into (categories, (category, spec) pairs,
+        skills), while filling the shared `sk2spec` index the tier-1 graph
+        features read: which specialisations each skill belongs to."""
         cats, specs, skills = set(), set(), set()
         for c in (rec.get("tags") or {}).get("categories") or []:
             cats.add(c["name"])

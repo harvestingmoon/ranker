@@ -71,6 +71,13 @@ def rewrite_csv(path: Path, merged: dict, judged_only: bool) -> int:
 
 
 def main():
+    """CLI: fold the grading top-up into a corpus's label files.
+
+    The top-up grades the pairs earlier systems ranked highly but never had graded
+    (ungraded pairs score 0, which punished rankers for promoting anything the
+    original pool missed). Idempotent: re-running on already-merged files is a
+    no-op, so it is safe in the reproduce sequence.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="data/data_set_v5")
     ap.add_argument("--topup", type=Path, default=TOPUP)

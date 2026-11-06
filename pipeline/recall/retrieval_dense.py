@@ -32,12 +32,21 @@ _model_cache: dict[str, SentenceTransformer] = {}
 
 
 def _get_model(model_name: str = BASE_MODEL_NAME) -> SentenceTransformer:
+    """Load a SentenceTransformer once per process and cache it -- model loading
+    dominates runtime otherwise, and every caller wants the same weights."""
     if model_name not in _model_cache:
         _model_cache[model_name] = SentenceTransformer(model_name)
     return _model_cache[model_name]
 
 
 def _truncate_and_normalize(vecs: np.ndarray, truncate_dim: int | None) -> np.ndarray:
+    """Cut each vector to its first `truncate_dim` dimensions (Matryoshka), then
+    scale to unit length so a dot product is a cosine similarity.
+
+    Truncation must come before normalisation, otherwise the shortened vector is
+    no longer unit length. Zero vectors are left at zero (norm forced to 1.0)
+    rather than producing NaN.
+    """
     if truncate_dim is not None:
         vecs = vecs[:, :truncate_dim]
     norms = np.linalg.norm(vecs, axis=1, keepdims=True)
@@ -82,6 +91,14 @@ class DenseRetriever:
         model_name: str = BASE_MODEL_NAME,
         query_prefix: str = QUERY_PREFIX_GENERIC,
     ):
+        """Embed the whole provider corpus once, at construction.
+
+        Cost warning: this is the expensive step (~3,024 provider showcases), so
+        build one retriever and reuse it. `truncate_dim` selects a Matryoshka
+        width; note the module default is 256 while the shipped pipeline runs
+        full 1024 (features.py --dense-dim), so pass it explicitly rather than
+        relying on the default.
+        """
         self.providers = providers
         self.provider_ids = [p["provider_id"] for p in providers]
         self.truncate_dim = truncate_dim
@@ -93,6 +110,9 @@ class DenseRetriever:
         self.doc_vecs = _truncate_and_normalize(raw, truncate_dim)
 
     def rank(self, query_text: str) -> list[tuple[int, float]]:
+        """Rank every provider for one query; returns [(provider_id, cosine), ...]
+        descending. The query gets the asymmetric instruction prefix (documents
+        never do), which is how mxbai was trained."""
         model = _get_model(self.model_name)
         raw = model.encode([self.query_prefix + query_text], convert_to_numpy=True, show_progress_bar=False)
         q_vec = _truncate_and_normalize(raw, self.truncate_dim)[0]

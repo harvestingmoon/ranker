@@ -42,6 +42,11 @@ FEATURES = list(DEFAULT_FEATURES) + list(TAG_FEATURES)   # 17, in declared order
 
 
 def load_rows(hire_id):
+    """Load one gig's precomputed candidate rows and merge in its tag features.
+
+    Replays the saved CSVs rather than re-running retrieval, which is why this
+    only works for gigs already in the corpus -- serve.py is the live path.
+    """
     base = {}
     for r in csv.DictReader((FEAT / "candidates_top50.csv").open()):
         if str(r["hire_id"]) == str(hire_id):
@@ -65,6 +70,11 @@ def load_rows(hire_id):
 
 
 def main():
+    """CLI: emit one real request/response pair as JSON, for the API contract doc.
+
+    Scores with the saved serving model, so the numbers printed are the model's
+    actual output rather than a hand-written illustration.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--hire-id", default="1")
     ap.add_argument("--top-k", type=int, default=10)

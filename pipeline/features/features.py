@@ -88,6 +88,7 @@ AVAIL_DECAY_DAYS = 60.0  # data_sat: linear decay to 0 once availability trails 
 
 
 def load_json(name: str):
+    """Read a JSON file out of the current dataset folder (DATA_DIR/name)."""
     return json.loads((DATA_DIR / name).read_text())
 
 
@@ -165,6 +166,14 @@ def dense_matrix(hirers, providers, model_name: str, dim, cache_tag: str):
 
 
 def main():
+    """CLI: build candidates_top50.csv (and train_pairs.csv) for a corpus.
+
+    For each gig: run refined BM25 and dense retrieval over all providers, fuse
+    with RRF, keep the top-k pool, and write one row per candidate carrying the
+    retrieval features, the structured (budget/seniority/availability) features
+    and the grade. Tag features land in a separate CSV because they need torch in
+    its own process. This is the join point between Stage 1 and Stage 2.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--top-k", type=int, default=50,
                     help="candidate pool size per query (RRF top-K before re-ranking)")

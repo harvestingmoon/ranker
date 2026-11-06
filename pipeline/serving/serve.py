@@ -88,6 +88,20 @@ def _tag_matcher(gig):
 
 
 def serve(gig: dict, top_k: int = 10) -> dict:
+    """Rank providers for one gig, end to end, and return the response contract.
+
+    Runs the same three stages the training pipeline runs, on a gig that need not
+    be in the corpus: Stage 1 retrieval (BM25 + dense -> RRF) narrows 3,024
+    providers to a 50-candidate pool; features are assembled in the exact
+    positional order the model expects; Stage 2 LambdaMART scores the pool.
+
+    Three things the caller must know (see API_IO_SPEC.md):
+      - score_features are z-scored WITHIN this gig before scoring -- serving raw
+        values silently degrades ranking rather than erroring
+      - `provider_id` is a corpus row index; join id_map.json for a platform id
+      - `score` is a per-gig min-max of the margin, so rank 1 is always 100.0;
+        it is a ranking score, not a probability
+    """
     s = _load()
     hid = gig["hire_id"]
 
@@ -174,6 +188,12 @@ def serve(gig: dict, top_k: int = 10) -> dict:
 
 
 def main():
+    """CLI: serve one gig and print the JSON response.
+
+    `--hire-id` pulls a gig already in the corpus (useful as a control: it should
+    reproduce the training-time ranking); `--gig-json` takes any gig record, which
+    is the path a live request takes. Refuses a tier that has no model artifact.
+    """
     global TIER, MODEL, FEATURES
     ap = argparse.ArgumentParser()
     ap.add_argument("--hire-id")

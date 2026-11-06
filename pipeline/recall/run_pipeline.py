@@ -52,14 +52,20 @@ RRF_WEIGHT_COMBOS = [(1.0, 1.0), (1.0, 1.5), (0.7, 1.3), (1.5, 1.0)]  # (sparse_
 
 
 def load_json(name):
+    """Read a JSON file out of the current dataset folder (DATA_DIR/name)."""
     return json.loads((DATA_DIR / name).read_text())
 
 
 def ranked_ids_only(scored: list[tuple[int, float]]) -> list[int]:
+    """Drop the scores and keep the provider ids in rank order -- the form every
+    results JSON and the evaluator expect."""
     return [pid for pid, _score in scored]
 
 
 def run_dense_model(label, providers, hirers, provider_ids, model_name, dims, query_prefix=QUERY_PREFIX_GENERIC):
+    """Embed the corpus once, then score every dimension in `dims` off that single
+    pass -- Matryoshka truncation is cheap, re-embedding is not. Returns
+    {dim: ranked lists}, keyed by dimension (None = full width)."""
     print(f"Embedding with {label} ({model_name})...")
     t0 = time.time()
     doc_raw = encode_docs([provider_text(p) for p in providers], model_name=model_name)
@@ -83,6 +89,10 @@ def run_dense_model(label, providers, hirers, provider_ids, model_name, dims, qu
 
 
 def main():
+    """CLI: run Stage 1 over the chosen corpus and write every retriever's ranked
+    lists into results_data/<corpus>/ (bm25 baseline vs refined, dense at each
+    Matryoshka width, then RRF fusions). These JSONs are what the feature
+    builder and the evaluator read, so this stage must run first."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="data",
                     help="dataset folder under pipeline/ (e.g. data_sat); outputs are namespaced accordingly")

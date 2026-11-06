@@ -67,10 +67,14 @@ def set_dataset(tag: str):
 
 
 def load_json(p):
+    """Read a JSON file from the path given."""
     return json.loads(Path(p).read_text())
 
 
 def pick_device(requested: str) -> str:
+    """Resolve --device. 'auto' prefers CUDA and prints the card and its VRAM so a
+    run's log shows what it actually ran on; falls back to CPU, which is slow
+    enough that a full cross-encoder fine-tune is impractical there."""
     if requested != "auto":
         return requested
     if torch.cuda.is_available():
@@ -109,6 +113,12 @@ def rerank_lists(meta, scores, rrf_full):
 
 
 def score(args):
+    """Score every candidate pair in candidates_top50.csv with an already-trained
+    cross-encoder and write ce_scores_<tag>.csv.
+
+    This is the cheap path: no fine-tuning, just inference over the existing
+    pool, which is what the set-wise model consumes as input features.
+    """
     cand_path = FEAT_DIR / f"candidates_top{args.top_k}.csv"
     if not cand_path.exists():
         raise SystemExit(f"{cand_path} not found -- run `python -m pipeline.features.features --top-k {args.top_k}` first")
@@ -322,6 +332,13 @@ def finetune(args):
 
 
 def main():
+    """CLI for the Pro tier's cross-encoder stage.
+
+    Two modes: `score` runs an existing model over the candidate pool, and
+    `finetune` trains one on our grades under per-query k-fold CV so every score
+    produced is out-of-fold. Fine-tuning is GPU-bound (~20-60 min per model on an
+    H100); scoring is cheap.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["score", "finetune"], required=True)
     ap.add_argument("--model", default=DEFAULT_MODEL)

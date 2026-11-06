@@ -62,6 +62,13 @@ def tag_axes(record: dict):
 
 class TagMatcher:
     def __init__(self, hirers: list, providers: list, skill_vectors: dict | None = None):
+        """Pre-parse both sides' tags and precompute skill IDF over the provider
+        corpus, so per-pair scoring is set intersection only.
+
+        IDF = log(n / (1 + df)): a skill held by many providers is worth little,
+        a rare one is worth a lot. `idf_unseen` covers a gig skill no provider
+        has -- it must not be treated as free.
+        """
         self.gig = {r["hire_id"]: tag_axes(r) for r in hirers}
         self.prov = {r["provider_id"]: tag_axes(r) for r in providers}
         n = len(providers)
@@ -71,6 +78,17 @@ class TagMatcher:
         self.vec = skill_vectors or {}
 
     def features(self, hire_id: int, provider_id: int) -> dict:
+        """The 8 tag features for one (gig, provider) pair.
+
+        `tag_level` is the deepest shared rung of the hierarchy (3 = shared
+        specialisation AND skill, 2 = shared specialisation, 1 = shared category
+        only, 0 = nothing); the *_cov features are the share of the gig's
+        categories / specialisations / skills the provider covers, with
+        `skill_idf_cov` weighting rare skills higher. `skill_soft` is embedding
+        similarity on the skill names, to catch near-synonyms exact matching
+        misses. `has_tags_*` exist so the model can tell "untagged" from
+        "tagged but mismatched".
+        """
         gc, gs, gk = self.gig[hire_id]
         pc, ps, pk = self.prov[provider_id]
         shared_skills = gk & pk
@@ -117,6 +135,12 @@ def embed_skills(skills: list, cache: Path) -> dict:
 
 
 def main():
+    """CLI: build tag_features.csv for every candidate pair in a corpus.
+
+    Runs in its own process on purpose -- it loads torch, and torch + xgboost in
+    one process segfaults on macOS. Called with the same --data-dir as
+    features.py, so the two CSVs line up row for row.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="data/data_set_v5_tax",
                     help="a corpus whose hirers.json / providers.json carry sf_v1 `tags`")

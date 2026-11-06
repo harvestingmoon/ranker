@@ -40,6 +40,10 @@ GAIN = {0: 0.0, 1: 33.0, 2: 67.0, 3: 100.0}
 
 class SetRanker(nn.Module):
     def __init__(self, n_feat, d=64, layers=2, heads=4, dropout=0.15):
+        """Project each candidate's n_feat features up to d, then run a small
+        transformer encoder over them. `batch_first=True` because our tensors are
+        [B gigs, N candidates, F]; `norm_first=True` (pre-LN) keeps training
+        stable at this depth without warmup."""
         super().__init__()
         self.inp = nn.Sequential(nn.Linear(n_feat, d), nn.GELU(), nn.Dropout(dropout))
         layer = nn.TransformerEncoderLayer(d_model=d, nhead=heads, dim_feedforward=2 * d,
@@ -48,6 +52,10 @@ class SetRanker(nn.Module):
         self.head = nn.Linear(d, 1)
 
     def forward(self, x):                       # [B, N, F]
+        """Score a whole candidate set at once: [B gigs, N candidates, F features]
+        in, [B, N] scores out. Self-attention runs across the N axis, so a
+        candidate's score depends on the others in its gig -- that is the whole
+        point of the set-wise model."""
         h = self.enc(self.inp(x))
         return self.head(h).squeeze(-1)         # [B, N]
 
@@ -73,6 +81,13 @@ def build_x(by_query, feats, queries):
 
 
 def main():
+    """CLI: train and evaluate the Pro tier's set-wise transformer.
+
+    Same GroupKFold-by-gig discipline as Lightweight, but averages several seeds
+    per fold (the model is stochastic) and trains on the grader's continuous
+    0-100 score rather than the 4 coarse bins. Writes out-of-fold ranked lists
+    only -- no model is saved, which is why Pro has no serving path yet.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="data/data_set_v5_tax")
     ap.add_argument("--ce-tags", default="v5ce_minilm,v5ce_bge,v5ce_gte",

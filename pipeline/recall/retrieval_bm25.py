@@ -26,6 +26,8 @@ SYNONYMS_PATH = PIPELINE / "data" / "synonyms.json"
 
 
 def _load_stemmed_synonyms() -> dict[str, list[str]]:
+    """Load data/synonyms.json and stem every key and value, so a synonym hits
+    whatever surface form the document used ("regulatory" vs "regulation")."""
     raw = json.loads(SYNONYMS_PATH.read_text())
     stemmed = {}
     for key, values in raw.items():
@@ -38,6 +40,10 @@ def _load_stemmed_synonyms() -> dict[str, list[str]]:
 class BM25Retriever:
     def __init__(self, providers: list[dict], k1: float = 1.5, b: float = 0.75,
                  refined: bool = True, title_weight: int = 3):
+        """Index all providers once. `refined=False` gives the plain baseline
+        (no stemming, no title weighting, no synonyms); `refined=True` is the
+        shipped configuration. k1/b are standard Okapi BM25 term-frequency and
+        length-normalisation constants, left at the usual defaults."""
         self.providers = providers
         self.provider_ids = [p["provider_id"] for p in providers]
         self.refined = refined
@@ -52,6 +58,9 @@ class BM25Retriever:
         self.bm25 = BM25Okapi(self.tokenized_docs, k1=k1, b=b)
 
     def _expand_with_synonyms(self, tokens: list[str]) -> list[str]:
+        """Append a synonym for every token whose stem is in the synonym table.
+        The original token is kept, so expansion can only add recall -- it never
+        removes a term the plain query already had."""
         expanded = list(tokens)
         for tok in tokens:
             stem = simple_stem(tok)
@@ -60,6 +69,10 @@ class BM25Retriever:
         return expanded
 
     def _query_tokens(self, query_text: str, query_title: str | None = None) -> list[str]:
+        """Build the query side to match the document side: same field weighting
+        and stemming when refined, then synonym expansion. Without a title
+        (e.g. a gig with no hire_title) it falls back to plain stemmed tokens,
+        so document/query symmetry is best-effort rather than assumed."""
         if not self.refined:
             return tokenize(query_text)
         # rebuild with field weighting matching the document side

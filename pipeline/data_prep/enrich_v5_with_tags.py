@@ -25,6 +25,8 @@ OUT = PIPELINE / "data" / "data_set_v5_tax"
 
 
 def axis_counts(recs):
+    """Count distinct categories / specialisations / skill nodes across the given
+    records -- a quick shape check that the tag tree grafted onto both sides."""
     cats, sps, sts, sks = set(), set(), set(), set()
     for r in recs:
         for c in (r.get("tags") or {}).get("categories") or []:
@@ -38,6 +40,13 @@ def axis_counts(recs):
 
 
 def main():
+    """CLI: build data_set_v5_tax from data_set_v5 plus a Scrape-and-Tag checkout.
+
+    Joins the SkillsFuture `sf_v1` tags onto both hirers and providers by
+    source_file, writing a new corpus folder. Only `tags` is added -- the text,
+    industry labels and ids stay byte-identical, so Stage-1 rankings are unchanged
+    and the existing grades still describe the same text.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--mcjuh-dir", type=Path, default=Path("/tmp/mcjuh/data/output"),
                     help="data/output folder of a mcjuh/BT4103-Scrape-and-Tag checkout")

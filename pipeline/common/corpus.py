@@ -70,6 +70,13 @@ _MIN_STEM_LEN = 4
 
 
 def simple_stem(word: str) -> str:
+    """Conservative suffix stripping -- folds inflections (regulate / regulatory /
+    regulation, provision / provisioning) onto a shared root.
+
+    Deliberately not Porter/Snowball: the vocabulary here is small and
+    domain-specific, and an aggressive stemmer would collide distinct terms.
+    A rule only fires if what remains is still >= _MIN_STEM_LEN characters.
+    """
     for suffix, replacement in _SUFFIX_RULES:
         if word.endswith(suffix) and len(word) - len(suffix) + len(replacement) >= _MIN_STEM_LEN:
             return word[: -len(suffix)] + replacement
@@ -92,6 +99,13 @@ def tokenize(text: str, stem: bool = False) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def provider_bm25_tokens(p: dict, title_weight: int = 3) -> list[str]:
+    """Field-weighted document tokens for BM25 (BM25F-style).
+
+    Title-like fields (`about_title`, `services_offered_title`) are repeated
+    `title_weight` times so they outrank body text in the score. Repetition is
+    used instead of a per-field scorer so a stock BM25 library suffices.
+    Tokens are stemmed, unlike `provider_text()` which is fed to the embedder.
+    """
     title_text = " ".join(x for x in [p.get("about_title"), p.get("services_offered_title")] if x)
     body_text = " ".join(x for x in [p.get("about_description"), p.get("services_offered_description"), p.get("relevant_experience")] if x)
     title_tokens = tokenize(title_text, stem=True) * title_weight
@@ -100,6 +114,14 @@ def provider_bm25_tokens(p: dict, title_weight: int = 3) -> list[str]:
 
 
 def hirer_bm25_tokens(h: dict, title_weight: int = 3) -> list[str]:
+    """Field-weighted query tokens for BM25 -- the gig-title counterpart of
+    `provider_bm25_tokens`, so both sides of the score are built the same way.
+
+    Caveat (known, documented in the README): the BM25 query text also runs
+    through `hirer_text()`, which already contains the title, so the gig title
+    effectively counts title_weight + 1 times, not title_weight. It affects
+    every system equally, so it is flagged rather than changed.
+    """
     title_tokens = tokenize(h.get("hire_title") or "", stem=True) * title_weight
     body_text = " ".join(x for x in [h.get("hire_description"), h.get("hire_description_additional_notes")] if x)
     body_tokens = tokenize(body_text, stem=True)

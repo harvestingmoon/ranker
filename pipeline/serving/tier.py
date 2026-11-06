@@ -18,6 +18,9 @@ TIERS = ("lightweight", "pro")
 
 
 def load_tier(name: str) -> dict:
+    """Load configs/<name>.json and sanity-check it declares the tier it was asked
+    for. Both tiers answer the same request, so the config, not the caller, is the
+    single place that selects the model."""
     path = CONFIG_DIR / f"{name}.json"
     if not path.exists():
         raise SystemExit(f"unknown tier '{name}' — no config at {path}")
@@ -64,6 +67,8 @@ def check() -> int:
 
 
 def main():
+    """CLI: --check asserts the tiers have not drifted apart (same response shape,
+    same feature vector, model present if servable); --show dumps one config."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--show", choices=TIERS)

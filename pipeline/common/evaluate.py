@@ -23,14 +23,25 @@ RELEVANCE_THRESHOLD = 40  # score >= this counts as "relevant" for P/R/MRR
 
 
 def _relevance(ground_truth_row: dict, provider_id: int) -> int:
+    """Graded relevance for one pair: the stored 1-100 score, or 0 when the pair
+    was never graded. Ungraded therefore counts as irrelevant -- this is what
+    makes pooling bias possible if the candidate pool and the graded pool differ.
+    """
     return ground_truth_row.get(str(provider_id), 0)
 
 
 def _is_relevant(ground_truth_row: dict, provider_id: int) -> bool:
+    """Binary relevance for P/R/MRR only. NDCG keeps the graded score; these
+    three metrics need a yes/no, so the continuous score is thresholded."""
     return _relevance(ground_truth_row, provider_id) >= RELEVANCE_THRESHOLD
 
 
 def precision_at_k(ranked_ids: list[int], ground_truth_row: dict, k: int) -> float:
+    """Share of the top-k results that are relevant (score >= threshold).
+
+    Denominator is the number of results actually returned, not k, so a short
+    list is not penalised for being short.
+    """
     top_k = ranked_ids[:k]
     if not top_k:
         return 0.0
@@ -39,6 +50,12 @@ def precision_at_k(ranked_ids: list[int], ground_truth_row: dict, k: int) -> flo
 
 
 def recall_at_k(ranked_ids: list[int], ground_truth_row: dict, k: int) -> float:
+    """Share of ALL relevant pairs for this gig that appear in the top k.
+
+    Returns None (not 0.0) when the gig has no relevant pair at all: the metric
+    is undefined there, and the caller skips it rather than averaging in a zero
+    that would punish the system for a labelling gap.
+    """
     total_relevant = sum(1 for pid_str in ground_truth_row if ground_truth_row[pid_str] >= RELEVANCE_THRESHOLD)
     if total_relevant == 0:
         return None  # undefined -- no relevant items exist for this query
@@ -48,6 +65,12 @@ def recall_at_k(ranked_ids: list[int], ground_truth_row: dict, k: int) -> float:
 
 
 def dcg_at_k(ranked_ids: list[int], ground_truth_row: dict, k: int) -> float:
+    """Discounted cumulative gain: the graded score at each rank, discounted by
+    log2(rank + 1), summed over the top k.
+
+    Gain is the raw score (linear), not 2^rel - 1 -- see the module docstring
+    for why the exponential form is wrong on a 0-100 scale.
+    """
     dcg = 0.0
     for i, pid in enumerate(ranked_ids[:k]):
         rel = _relevance(ground_truth_row, pid)
@@ -57,6 +80,11 @@ def dcg_at_k(ranked_ids: list[int], ground_truth_row: dict, k: int) -> float:
 
 
 def ndcg_at_k(ranked_ids: list[int], ground_truth_row: dict, k: int) -> float:
+    """DCG normalised by the ideal ordering's DCG (IDCG), so 1.0 = perfect.
+
+    IDCG is built from every graded score for this gig sorted descending, which
+    is why a gig with no relevant pair returns 0.0 instead of dividing by zero.
+    """
     ideal_order = sorted(ground_truth_row.values(), reverse=True)
     idcg = sum(rel / math.log2(i + 2) for i, rel in enumerate(ideal_order[:k]))
     if idcg == 0:
@@ -65,6 +93,11 @@ def ndcg_at_k(ranked_ids: list[int], ground_truth_row: dict, k: int) -> float:
 
 
 def reciprocal_rank(ranked_ids: list[int], ground_truth_row: dict) -> float:
+    """1/rank of the FIRST relevant result, or 0.0 if none is returned.
+
+    Only the first hit matters, which is why MRR rewards getting one good
+    provider high rather than spreading relevant ones down the list.
+    """
     for i, pid in enumerate(ranked_ids):
         if _is_relevant(ground_truth_row, pid):
             return 1.0 / (i + 1)

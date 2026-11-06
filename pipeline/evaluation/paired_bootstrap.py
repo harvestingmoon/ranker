@@ -21,6 +21,12 @@ METRICS = ("precision@5", "recall@10", "ndcg@10", "mrr")
 
 
 def load_systems(results_dir: Path):
+    """Discover every ranked-list file in the results folder as a competing system.
+
+    Discovery rather than a hardcoded list, so a new run's JSON is compared
+    automatically. Files that are not {query_id: [ranked ids]} are skipped, which
+    keeps stray artifacts out of the comparison.
+    """
     out = {}
     for p in sorted(results_dir.glob("*.json")):
         try:
@@ -37,6 +43,13 @@ def load_systems(results_dir: Path):
 
 
 def main():
+    """CLI: score every system in a results folder, then paired-bootstrap each one
+    against --baseline.
+
+    Resampling is over queries, not over pairs, so the CI respects the fact that a
+    gig's candidates are not independent evidence. A delta whose 95% CI crosses 0
+    is noise at this corpus size, not a win.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", default="data_all")
     ap.add_argument("--baseline", default="rrf_k60.json")

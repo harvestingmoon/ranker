@@ -106,6 +106,8 @@ def train_labels(rows):
 
 
 def load_json(p):
+    """Read a JSON file from the path given (callers pass an absolute path built
+    from the dataset folder)."""
     return json.loads(Path(p).read_text())
 
 
@@ -154,6 +156,9 @@ def full_lists(ranked_head, rrf_full):
 
 
 def report(name, ranked_by_query, gt, rrf_full):
+    """Score one system's ranked lists against the ground truth, print the metric
+    line, and return the dict. Lists are padded from the RRF ranking first, so
+    every system is scored over the same full candidate set."""
     m = evaluate_all_hirers(full_lists(ranked_by_query, rrf_full), gt, ks=(5, 10))
     print(f"  {name:22s} P@5={m['precision@5']:.3f} R@5={m['recall@5']:.3f} NDCG@5={m['ndcg@5']:.3f} "
           f"P@10={m['precision@10']:.3f} R@10={m['recall@10']:.3f} NDCG@10={m['ndcg@10']:.4f} MRR={m['mrr']:.3f}")
@@ -200,6 +205,14 @@ def train_oof(rows, features, folds, seed, gt, rrf_full):
 
 
 def main():
+    """CLI: train and evaluate the Lightweight tier.
+
+    Fits LambdaMART 5-fold GroupKFold BY GIG, so every gig is scored by a model
+    that never saw it -- the reported NDCG@10 comes from those out-of-fold
+    predictions, not from the model that gets saved. Then refits on all gigs and
+    saves that as the serving artifact. Both the OOF ranked lists and the model
+    are written under the dataset's namespace.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="data/data_set_v5_tax")
     ap.add_argument("--tag", default="v5tax_tags", help="output name for the OOF lists and the model")

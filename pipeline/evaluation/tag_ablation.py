@@ -66,6 +66,11 @@ def oof_lists(rows, by_query, queries, features, split_seed, use_label):
 
 
 def per_query(lists, queries, gt, judged):
+    """Compute each metric PER GIG rather than as a corpus average.
+
+    The bootstrap needs paired per-gig values for both systems, so that resampling
+    a gig moves both scores together -- averaging first would destroy the pairing.
+    """
     out = defaultdict(list)
     for q in queries:
         lst, g = lists[q], gt.get(str(q), {})
@@ -81,6 +86,12 @@ def per_query(lists, queries, gt, judged):
 
 
 def boot(a, b, n=10000):
+    """Paired bootstrap of (a - b) over gigs: returns (mean delta, 2.5th pct, 97.5th).
+
+    Resamples the per-gig deltas with replacement and re-averages. NaN pairs are
+    dropped first (a gig where the metric is undefined), and the RNG is seeded so
+    the reported interval is reproducible.
+    """
     ok = ~(np.isnan(a) | np.isnan(b))
     d = (a - b)[ok]
     s = d[np.random.default_rng(0).integers(0, len(d), (n, len(d)))].mean(axis=1)
@@ -88,6 +99,14 @@ def boot(a, b, n=10000):
 
 
 def main():
+    """CLI: the tags-vs-no-tags significance test.
+
+    Trains the same LambdaMART twice -- with and without the 8 tag features -- on
+    the ORIGINAL labels (before the top-up grades), then paired-bootstraps the
+    difference across several fold splits. Original labels are used on purpose:
+    the top-up grades were chosen by tag rankers, so using them here would let the
+    treatment pick its own test set.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="data/data_set_v5_tax")
     ap.add_argument("--splits", default="0,11,23", help="fold-split seeds; 0 = rerank_ltr.py's GroupKFold")
