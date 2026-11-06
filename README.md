@@ -225,6 +225,47 @@ Full history of variants tried, including rejected ones: [`ablation.md`](ablatio
   closed vocabulary; skills (825) are not, so `skill_soft` adds a soft tier. Industry is left
   out: a provider's industry is always one of its tag categories.
 
+## Pipeline at a glance
+
+Every stage is a module you run from the repo root, and each one writes a file the next one
+reads. Code on the left, the artifact it produces on the right:
+
+```
+pipeline/data/data_set_v5_tax/             the corpus: 1,106 gigs x 3,024 providers, 24,070 grades
+
+  pipeline/recall/run_pipeline.py          Stage 1  BM25 + dense -> RRF, 3,024 -> 50
+    -> pipeline/results_data/data_set_v5_tax/rrf_k60.json
+
+  pipeline/features/features.py            Stage 2  6 retrieval + 3 structured features, per candidate
+    -> pipeline/features_data/data_set_v5_tax/candidates_top50.csv
+
+  pipeline/features/tag_features.py        Stage 2  the 8 SkillsFuture tag features
+    -> pipeline/features_data/data_set_v5_tax/tag_features.csv
+
+  pipeline/lightweight/rerank_ltr.py       Stage 3  LambdaMART -> 0.8982 NDCG@10
+    -> pipeline/models_data/data_set_v5_tax/v5tax_tags_xgb.json      (serving model)
+    -> pipeline/results_data/data_set_v5_tax/v5tax_tags.json         (out-of-fold lists)
+
+  pipeline/serving/serve.py                Stage 4  retrieval -> features -> model -> JSON
+    -> the response shape in API_IO_SPEC.md
+```
+
+Pro replaces Stage 3 (`pipeline/pro/`): three cross-encoders write
+`ce_scores_v5ce_*.csv`, then `pro_ranker.py` consumes those plus the base features and
+writes `results_data/data_set_v5_tax/listwise_ceil_s7.json` -> 0.9507.
+
+Three things worth saying out loud when explaining it:
+
+- **`serve.py` does not read those CSV artifacts.** It re-runs Stages 1-3 live against the
+  corpus, which is why it works on a gig that is not in the corpus. The CSVs are the
+  *training* path, not the serving path.
+- **Order matters and nothing enforces it.** Run `features.py` before `rerank_ltr.py` and
+  you get a "file not found", not a message naming the stage you skipped. `run_all.sh`
+  exists to encode that order once.
+- **The trained artifacts are committed**, so a reader who only wants to see it work runs
+  one command: `./run_all.sh --serve` (or `python -m pipeline.serving.serve --hire-id 1`).
+  Re-training from the corpus is what needs the full chain.
+
 ## Layout
 
 ![Code flow](figures/code_flow.svg)
