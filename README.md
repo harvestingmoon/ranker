@@ -263,6 +263,20 @@ pipeline/
 
 ## Reproduce
 
+**One command runs the whole pipeline.** `run_all.sh` encodes the stage order, skips
+any stage whose artifact already exists, and keeps `tag_features.py` in its own
+process (torch + xgboost in one process segfaults on macOS):
+
+```bash
+./run_all.sh                 # Stage 1 -> features -> reranker (skips finished stages)
+./run_all.sh --force         # rerun everything
+./run_all.sh --pro --eval    # add the GPU cross-encoders and the significance test
+./run_all.sh --serve         # serve one gig at the end, to prove the output
+./run_all.sh --dry-run       # print the commands without running them
+```
+
+By hand, the equivalent:
+
 ```bash
 pip install -r pipeline/requirements.txt                                  # Lightweight
 pip install -r pipeline/requirements.txt -r pipeline/requirements-pro.txt  # Pro
