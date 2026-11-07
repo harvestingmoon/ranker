@@ -48,3 +48,7 @@ pipeline/features_data/*/taxonomy_scores.csv
 pipeline/data/data_set_v5/grade_*.out
 pipeline/data/data_set_v5/overnight.*
 pipeline/data/data_set_v5/pools.log
+
+# Local environment overrides (secrets-free, but machine-specific).
+# .env.example is committed; .env is not.
+.env

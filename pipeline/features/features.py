@@ -52,6 +52,10 @@ from pipeline.recall.retrieval_dense import encode_docs, encode_queries, rank_fr
 from pipeline.recall.retrieval_rrf import rrf_fuse
 from pipeline.common.paths import PIPELINE
 
+from pipeline.common.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 BASE = PIPELINE
 DATA_DIR = BASE / "data"
 FEAT_DIR = BASE / "features"
@@ -155,9 +159,9 @@ def dense_matrix(hirers, providers, model_name: str, dim, cache_tag: str):
     doc_path = CACHE_DIR / f"providers_{cache_tag}.npy"
     qry_path = CACHE_DIR / f"hirers_{cache_tag}.npy"
     if doc_path.exists() and qry_path.exists():
-        print(f"  using cached embeddings ({cache_tag})")
+        logger.info(f"  using cached embeddings ({cache_tag})")
         return np.load(doc_path), np.load(qry_path)
-    print(f"  embedding {len(providers)} providers + {len(hirers)} hirers with {model_name} ...")
+    logger.info(f"  embedding {len(providers)} providers + {len(hirers)} hirers with {model_name} ...")
     docs = encode_docs([provider_text(p) for p in providers], model_name=model_name)
     queries = encode_queries([hirer_text(h) for h in hirers], model_name=model_name)
     np.save(doc_path, docs)
@@ -203,11 +207,11 @@ def main():
     grades = load_json("llm_judgments_merged.json")
     provider_ids = [p["provider_id"] for p in providers]
 
-    print("Building sparse ranking (refined BM25) ...")
+    logger.info("Building sparse ranking (refined BM25) ...")
     bm25 = BM25Retriever(providers, refined=True)
 
     dim_tag = f"{args.dense_dim}"
-    print(f"Building dense ranking (Matryoshka dim={dim_tag}) ...")
+    logger.info(f"Building dense ranking (Matryoshka dim={dim_tag}) ...")
     doc_raw, query_raw = dense_matrix(hirers, providers, args.dense_model, args.dense_dim,
                                       cache_tag=f"{Path(args.dense_model).name}_{dim_tag}")
 
@@ -295,13 +299,13 @@ def main():
     from collections import Counter
     dist = Counter(r["label"] for r in train_rows)
     n_unjudged_as_neg = sum(1 for r in train_rows if not r["judged"])
-    print(f"\ncandidates_top{args.top_k}.csv : {len(rows)} rows ({len(hirers)} queries x <= {args.top_k})")
-    print(f"train_pairs.csv               : {len(train_rows)} rows"
+    logger.info(f"\ncandidates_top{args.top_k}.csv : {len(rows)} rows ({len(hirers)} queries x <= {args.top_k})")
+    logger.info(f"train_pairs.csv               : {len(train_rows)} rows"
           + (f" (incl. {n_unjudged_as_neg} unjudged-as-negative, --label-policy all)" if n_unjudged_as_neg else ""))
-    print(f"  label distribution (train)  : {dict(sorted(dist.items()))}")
-    print(f"  judged pairs inside top-{args.top_k} : {judged_in_pool}")
-    print(f"  grade>=2 pairs OUTSIDE top-{args.top_k} (recall loss, unfixable by re-ranking): {skipped_out_of_pool}")
-    print("\nNext: score with the cross-encoder, then train the LTR ranker (see pipeline/RERANK_README.md)")
+    logger.info(f"  label distribution (train)  : {dict(sorted(dist.items()))}")
+    logger.info(f"  judged pairs inside top-{args.top_k} : {judged_in_pool}")
+    logger.info(f"  grade>=2 pairs OUTSIDE top-{args.top_k} (recall loss, unfixable by re-ranking): {skipped_out_of_pool}")
+    logger.info("\nNext: score with the cross-encoder, then train the LTR ranker (see pipeline/RERANK_README.md)")
 
 
 if __name__ == "__main__":

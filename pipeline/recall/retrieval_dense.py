@@ -17,15 +17,16 @@ format and loads identically.
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+from pipeline.common import settings
 from pipeline.common.corpus import provider_text, hirer_text
 
-BASE_MODEL_NAME = "mixedbread-ai/mxbai-embed-large-v1"
-DEFAULT_TRUNCATE_DIM = 256
+BASE_MODEL_NAME = settings.DENSE_MODEL_NAME
+DEFAULT_TRUNCATE_DIM = settings.DENSE_TRUNCATE_DIM
 
 # mxbai-embed-large-v1 is asymmetric: queries get an instruction prefix,
 # passages/documents do not. See the model card. A domain-tuned alternative
 # is also provided for the prefix A/B experiment in the notebook.
-QUERY_PREFIX_GENERIC = "Represent this sentence for searching relevant passages: "
+QUERY_PREFIX_GENERIC = settings.DENSE_QUERY_PREFIX
 QUERY_PREFIX_DOMAIN = "Represent this consulting engagement request for matching to a provider showcase: "
 
 _model_cache: dict[str, SentenceTransformer] = {}

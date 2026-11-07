@@ -35,6 +35,10 @@ from pipeline.common import evaluate as E
 from pipeline.pro import pro_features as P
 from pipeline.lightweight import rerank_ltr as R
 
+from pipeline.common.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 GAIN = {0: 0.0, 1: 33.0, 2: 67.0, 3: 100.0}
 
 
@@ -121,14 +125,14 @@ def main():
     queries = sorted(by_query)
     q_index = {q: i for i, q in enumerate(queries)}
     soft = P.load_soft(R.BASE / "data" / "data_set_v5")
-    print(f"soft labels loaded: {len(soft)} pairs")
+    logger.info(f"soft labels loaded: {len(soft)} pairs")
     G = np.stack([[
         100.0 * soft[(r["hire_id"], r["provider_id"])]
         if (r["hire_id"], r["provider_id"]) in soft and r["label"] is not None
         else (GAIN.get(r["label"], 0.0) if r["label"] is not None else 0.0)
         for r in by_query[q]] for q in queries]).astype(np.float32)
     M = np.stack([[r["label"] is not None for r in by_query[q]] for q in queries])
-    print(f"queries={len(queries)} features={len(feats)} device={device}")
+    logger.info(f"queries={len(queries)} features={len(feats)} device={device}")
 
     # ---- out-of-fold training ------------------------------------------
     oof = {}
@@ -177,16 +181,16 @@ def main():
                  for q in te_q}
         m = E.evaluate_all_hirers({str(q): v for q, v in lists.items()},
                                   {k: v for k, v in gt.items() if int(k) in set(te_q)}, ks=(10,))
-        print(f"  fold {fold}: NDCG@10={m['ndcg@10']:.4f}")
+        logger.info(f"  fold {fold}: NDCG@10={m['ndcg@10']:.4f}")
 
     lists = {q: [r["provider_id"] for r in sorted(rs, key=lambda r: -oof[(q, r["provider_id"])])]
              for q, rs in by_query.items()}
     m = E.evaluate_all_hirers({str(q): v for q, v in lists.items()}, gt, ks=(5, 10))
-    print(f"OOF: P@5={m['precision@5']:.4f} NDCG@5={m['ndcg@5']:.4f} "
+    logger.info(f"OOF: P@5={m['precision@5']:.4f} NDCG@5={m['ndcg@5']:.4f} "
           f"P@10={m['precision@10']:.4f} NDCG@10={m['ndcg@10']:.4f} MRR={m['mrr']:.4f}")
     out = Path(R.RESULTS_DIR) / f"listwise_{args.tag}.json"
     out.write_text(json.dumps({str(q): [int(p) for p in v] for q, v in lists.items()}))
-    print(f"wrote {out}")
+    logger.info(f"wrote {out}")
 
 
 if __name__ == "__main__":

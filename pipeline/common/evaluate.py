@@ -19,7 +19,10 @@ continuous score is thresholded at RELEVANCE_THRESHOLD.
 """
 import math
 
-RELEVANCE_THRESHOLD = 40  # score >= this counts as "relevant" for P/R/MRR
+from pipeline.common import settings
+
+RELEVANCE_THRESHOLD = settings.RELEVANCE_THRESHOLD  # score >= this is "relevant" for P/R/MRR
+# Override with RELEVANCE_THRESHOLD in .env -- it changes P/R/MRR only, never NDCG.
 
 
 def _relevance(ground_truth_row: dict, provider_id: int) -> int:

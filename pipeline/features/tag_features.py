@@ -42,12 +42,18 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
+
+from pipeline.common import settings
 from pipeline.common.paths import PIPELINE
+
+from pipeline.common.logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 BASE = PIPELINE
 TAG_FEATURES = ["tag_level", "has_tags_gig", "has_tags_prov", "cat_any", "spec_cov",
                 "skill_cov", "skill_idf_cov", "skill_soft"]
-SKILL_MODEL = "mixedbread-ai/mxbai-embed-large-v1"
+SKILL_MODEL = settings.SKILL_MODEL_NAME
 
 
 def tag_axes(record: dict):
@@ -167,7 +173,7 @@ def main():
         for h, p in pairs:
             fx = matcher.features(h, p)
             w.writerow([h, p] + [round(fx[k], 6) for k in TAG_FEATURES])
-    print(f"wrote {len(pairs)} rows x {len(TAG_FEATURES)} tag features to {out} "
+    logger.info(f"wrote {len(pairs)} rows x {len(TAG_FEATURES)} tag features to {out} "
           f"({len(skills)} distinct skills embedded)")
 
 

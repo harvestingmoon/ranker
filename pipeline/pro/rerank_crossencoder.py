@@ -44,6 +44,10 @@ from pipeline.common.corpus import provider_text, hirer_text
 from pipeline.common.evaluate import evaluate_all_hirers
 from pipeline.common.paths import PIPELINE
 
+from pipeline.common.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 BASE = PIPELINE
 DATA_DIR = BASE / "data"
 FEAT_DIR = BASE / "features"
@@ -80,9 +84,9 @@ def pick_device(requested: str) -> str:
     if torch.cuda.is_available():
         name = torch.cuda.get_device_name(0)
         vram = torch.cuda.get_device_properties(0).total_memory / 1e9
-        print(f"  GPU: {name} ({vram:.1f} GB) -- device=cuda")
+        logger.info(f"  GPU: {name} ({vram:.1f} GB) -- device=cuda")
         return "cuda"
-    print("  no CUDA device visible -- device=cpu")
+    logger.info("  no CUDA device visible -- device=cpu")
     return "cpu"
 
 
@@ -134,21 +138,21 @@ def score(args):
     gt = load_json(DATA_DIR / "ground_truth_llm.json")
 
     device = pick_device(args.device)
-    print(f"Loading cross-encoder {args.model} ...")
+    logger.info(f"Loading cross-encoder {args.model} ...")
     ce = CrossEncoder(args.model, num_labels=1, device=device, max_length=args.max_length)
     if args.fp16 and device == "cuda":
         ce.model.half()
-        print("  fp16 enabled")
+        logger.info("  fp16 enabled")
 
     pairs, meta = build_pairs(rows, providers_by_id, hirers_by_id)
-    print(f"Scoring {len(pairs)} (gig, showcase) pairs ...")
+    logger.info(f"Scoring {len(pairs)} (gig, showcase) pairs ...")
     t0 = time.time()
     scores = ce.predict(pairs, batch_size=args.batch_size, show_progress_bar=True)
     scores = np.asarray(scores, dtype=np.float64).reshape(-1)
     if not np.isfinite(scores).all():
         raise SystemExit(f"non-finite cross-encoder scores ({int((~np.isfinite(scores)).sum())} of {len(scores)}) "
                          f"-- drop --fp16 and re-run")
-    print(f"  scored in {time.time() - t0:.1f}s  (min={scores.min():.3f} max={scores.max():.3f})")
+    logger.info(f"  scored in {time.time() - t0:.1f}s  (min={scores.min():.3f} max={scores.max():.3f})")
 
     # ce score column for the LTR ranker
     score_csv = FEAT_DIR / f"ce_scores_{args.tag}.csv"
@@ -163,8 +167,8 @@ def score(args):
     out_json.write_text(json.dumps(ranked, indent=2))
 
     m = evaluate_all_hirers(ranked, gt, ks=(5, 10))
-    print(f"\nwrote {out_json.name} + {score_csv.name}")
-    print(f"  {args.tag:22s} P@5={m['precision@5']:.3f} R@5={m['recall@5']:.3f} "
+    logger.info(f"\nwrote {out_json.name} + {score_csv.name}")
+    logger.info(f"  {args.tag:22s} P@5={m['precision@5']:.3f} R@5={m['recall@5']:.3f} "
           f"NDCG@5={m['ndcg@5']:.3f} P@10={m['precision@10']:.3f} R@10={m['recall@10']:.3f} "
           f"NDCG@10={m['ndcg@10']:.4f} MRR={m['mrr']:.3f}")
 
@@ -229,7 +233,7 @@ def finetune(args):
     # ce_score for the LambdaMART.
     cand_rows = list(csv.DictReader(cand_path.open()))
     rows = [r for r in cand_rows if r["label"] != ""]
-    print(f"candidates to score: {len(cand_rows)}   training pairs: {len(rows)}")
+    logger.info(f"candidates to score: {len(cand_rows)}   training pairs: {len(rows)}")
     providers_by_id = {p["provider_id"]: p for p in load_json(DATA_DIR / "providers.json")}
     hirers_by_id = {h["hire_id"]: h for h in load_json(DATA_DIR / "hirers.json")}
     # The tail beyond the top-k pool only pads the list to a full permutation;
@@ -241,8 +245,8 @@ def finetune(args):
 
     queries = sorted({r["hire_id"] for r in cand_rows}, key=int)
     device = pick_device(args.device)
-    print(f"cross-encoder: {args.model}")
-    print(f"device: {device}   queries: {len(queries)}   folds: {args.cv_folds}   "
+    logger.info(f"cross-encoder: {args.model}")
+    logger.info(f"device: {device}   queries: {len(queries)}   folds: {args.cv_folds}   "
           f"positive grade: >= {args.positive_grade}")
 
     # ---- zero-shot reference over the SAME candidate universe (no training) ----
@@ -251,7 +255,7 @@ def finetune(args):
     zs_all = np.asarray(base_ce.predict(pairs_all, batch_size=args.batch_size,
                                        show_progress_bar=False)).reshape(-1)
     m_zs = evaluate_all_hirers(rerank_lists(meta_all, zs_all, rrf_full), gt, ks=(5, 10))
-    print(f"  zero-shot   : P@5={m_zs['precision@5']:.3f} NDCG@10={m_zs['ndcg@10']:.4f} MRR={m_zs['mrr']:.3f}")
+    logger.info(f"  zero-shot   : P@5={m_zs['precision@5']:.3f} NDCG@10={m_zs['ndcg@10']:.4f} MRR={m_zs['mrr']:.3f}")
     del base_ce
     if device == "cuda":
         torch.cuda.empty_cache()
@@ -264,7 +268,7 @@ def finetune(args):
         examples, n_pos, n_neg = make_examples(rows, train_q, providers_by_id, hirers_by_id, args.positive_grade)
         if not examples:
             raise SystemExit(f"fold {fold}: no training pairs")
-        print(f"\n  fold {fold}/{args.cv_folds}: {len(examples)} pairs ({n_pos} pos / {n_neg} neg) "
+        logger.info(f"\n  fold {fold}/{args.cv_folds}: {len(examples)} pairs ({n_pos} pos / {n_neg} neg) "
               f"over {len(train_q)} queries -> scoring {len(test_q)} held-out queries")
         t0 = time.time()
         ce = _fit_ce(args, examples, device)
@@ -280,7 +284,7 @@ def finetune(args):
 
         m = evaluate_all_hirers(rerank_lists(meta, sc, rrf_full), gt, ks=(10,))
         fold_report.append(m["ndcg@10"])
-        print(f"    done in {time.time() - t0:.1f}s   held-out NDCG@10={m['ndcg@10']:.4f}")
+        logger.info(f"    done in {time.time() - t0:.1f}s   held-out NDCG@10={m['ndcg@10']:.4f}")
         del ce
         if device == "cuda":
             torch.cuda.empty_cache()
@@ -303,22 +307,22 @@ def finetune(args):
     out_json.write_text(json.dumps(ranked, indent=2))
 
     m_oof = evaluate_all_hirers(ranked, gt, ks=(5, 10))
-    print(f"\n{'=' * 74}")
-    print(f"  zero-shot     (all {len(queries)} queries) : P@5={m_zs['precision@5']:.3f} "
+    logger.info(f"\n{'=' * 74}")
+    logger.info(f"  zero-shot     (all {len(queries)} queries) : P@5={m_zs['precision@5']:.3f} "
           f"NDCG@10={m_zs['ndcg@10']:.4f} MRR={m_zs['mrr']:.3f}")
-    print(f"  fine-tuned OOF(all {len(queries)} queries) : P@5={m_oof['precision@5']:.3f} "
+    logger.info(f"  fine-tuned OOF(all {len(queries)} queries) : P@5={m_oof['precision@5']:.3f} "
           f"NDCG@10={m_oof['ndcg@10']:.4f} MRR={m_oof['mrr']:.3f}   "
           f"(per-fold NDCG@10: {np.mean(fold_report):.4f} +- {np.std(fold_report):.4f})")
     delta = m_oof["ndcg@10"] - m_zs["ndcg@10"]
-    print(f"  fine-tune delta: {delta:+.4f} NDCG@10   "
+    logger.info(f"  fine-tune delta: {delta:+.4f} NDCG@10   "
           f"{'keep fine-tuned' if delta > 0 else 'KEEP ZERO-SHOT (fine-tune did not help)'}")
-    print(f"{'=' * 74}")
-    print(f"wrote {score_csv.name} (OUT-OF-FOLD) + {out_json.name}")
+    logger.info(f"{'=' * 74}")
+    logger.info(f"wrote {score_csv.name} (OUT-OF-FOLD) + {out_json.name}")
 
     # ---- final model on all pairs, for serving ----
     all_examples, n_pos, n_neg = make_examples(rows, set(queries), providers_by_id, hirers_by_id,
                                                args.positive_grade)
-    print(f"\ntraining final serving model on all {len(all_examples)} pairs "
+    logger.info(f"\ntraining final serving model on all {len(all_examples)} pairs "
           f"({n_pos} pos / {n_neg} neg) ...")
     final = _fit_ce(args, all_examples, device)
     probe = final.predict(pairs_all[:8], batch_size=8, show_progress_bar=False)
@@ -326,8 +330,8 @@ def finetune(args):
         raise SystemExit("final model produced NaN/inf -- retrain without --fp16")
     out_model = MODELS_DIR / f"ce-{args.tag}"
     final.save(str(out_model))
-    print(f"saved serving model to {out_model}")
-    print("\nNOTE: ce_scores_<tag>.csv is OOF (for honest measurement); the saved "
+    logger.info(f"saved serving model to {out_model}")
+    logger.info("\nNOTE: ce_scores_<tag>.csv is OOF (for honest measurement); the saved "
           "model is trained on all pairs (for serving).")
 
 

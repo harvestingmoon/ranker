@@ -31,6 +31,10 @@ from collections import Counter
 from pathlib import Path
 from pipeline.common.paths import PIPELINE
 
+from pipeline.common.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 BASE = PIPELINE
 TOPUP = BASE / "data/data_set_v5/judgments_topup_tags.jsonl"
 
@@ -100,7 +104,7 @@ def main():
 
     n_cand = rewrite_csv(feat_dir / "candidates_top50.csv", merged, judged_only=False)
     rewrite_csv(feat_dir / "train_pairs.csv", merged, judged_only=True)
-    print(f"{args.data_dir}: {sum(added.values())} new grades added "
+    logger.info(f"{args.data_dir}: {sum(added.values())} new grades added "
           f"(by grade {dict(sorted(added.items()))}); {n_cand} candidate rows newly labelled; "
           f"{sum(map(len, merged.values()))} graded pairs in total")
 

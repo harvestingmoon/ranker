@@ -16,6 +16,10 @@ import numpy as np
 from pipeline.common.evaluate import evaluate_all_hirers
 from pipeline.common.paths import PIPELINE
 
+from pipeline.common.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 BASE = PIPELINE
 METRICS = ("precision@5", "recall@10", "ndcg@10", "mrr")
 
@@ -68,11 +72,11 @@ def main():
     scored = {n: evaluate_all_hirers(r, gt) for n, r in systems.items()}
     labelled = [h for h in gt]
 
-    print(f"corpus {args.tag}: {len(gt)} labelled queries, "
+    logger.info(f"corpus {args.tag}: {len(gt)} labelled queries, "
           f"{sum(len(v) for v in gt.values())} judged pairs\n")
-    print(f"{'system':<26}" + "".join(f"{m:>11}" for m in METRICS))
+    logger.info(f"{'system':<26}" + "".join(f"{m:>11}" for m in METRICS))
     for n in systems:
-        print(f"{n:<26}" + "".join(f"{scored[n][m]:>11.4f}" for m in METRICS))
+        logger.info(f"{n:<26}" + "".join(f"{scored[n][m]:>11.4f}" for m in METRICS))
 
     # per-query vectors for the paired test
     from pipeline.common.evaluate import ndcg_at_k, precision_at_k, reciprocal_rank
@@ -83,11 +87,11 @@ def main():
     } for h in labelled} for n, r in systems.items()}
 
     rng = np.random.default_rng(20261011)
-    print(f"\npaired bootstrap vs {args.baseline}, {args.resamples:,} resamples over queries:")
+    logger.info(f"\npaired bootstrap vs {args.baseline}, {args.resamples:,} resamples over queries:")
     for n in systems:
         if n == args.baseline:
             continue
-        print(f"\n  {n}  vs  {args.baseline}")
+        logger.info(f"\n  {n}  vs  {args.baseline}")
         for m in METRICS:
             if m not in per[n][labelled[0]]:
                 continue
@@ -97,7 +101,7 @@ def main():
             boot = d[rng.integers(0, len(d), size=(args.resamples, len(d)))].mean(axis=1)
             lo, hi = np.percentile(boot, [2.5, 97.5])
             flag = "crosses 0" if lo <= 0 <= hi else "EXCLUDES 0"
-            print(f"    {m:<12} d={d.mean():+.4f}   95% CI [{lo:+.4f}, {hi:+.4f}]   {flag}")
+            logger.info(f"    {m:<12} d={d.mean():+.4f}   95% CI [{lo:+.4f}, {hi:+.4f}]   {flag}")
 
 
 if __name__ == "__main__":

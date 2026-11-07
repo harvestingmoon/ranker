@@ -361,6 +361,38 @@ python -m pipeline.pro.pro_ranker      # defaults = shipped config (3 CEs, d=64,
 Stage-1 ranked lists, the embedding cache and the skill-vector cache are git-ignored and
 regenerate from the commands above.
 
+## Configuration and logging
+
+Nothing tunable is hardcoded in the modules. Values resolve as **environment variable
+→ `.env` at the repo root → built-in default**, highest first, all in
+`pipeline/common/settings.py`.
+
+```bash
+cp .env.example .env      # optional — the defaults ARE the shipped configuration
+```
+
+A missing `.env` is not an error, deliberately: a fresh clone trains and serves the
+numbers in this README without any setup. `.env.example` exists so the knobs are
+discoverable, not to gate execution.
+
+**Settings vs reference data.** `STOPWORDS` and the stemming rules are *not* in
+`.env`, though they were once hardcoded in `common/corpus.py`. They live in
+`pipeline/data/stopwords.txt` and `pipeline/data/stem_rules.json`, beside
+`synonyms.json`. The reason is that they are the algorithm's definition rather than
+a per-machine setting: they are identical everywhere, they are long enough that an
+env-var line would be unreadable and shell-fragile, and `.env` is gitignored — a
+fresh clone would silently lose them and every Stage-1 number would move.
+
+Logging is standard `logging`, configured once in `pipeline/common/logging_setup.py`:
+
+```bash
+PIPELINE_LOG_LEVEL=DEBUG python -m pipeline.lightweight.rerank_ltr   # per-gig detail
+PIPELINE_LOG_FILE=run.log ./run_all.sh                               # also write a file
+```
+
+Every module logs to its own named logger (`%(name)s` in the format string), so
+`--log-level DEBUG` on one stage does not silence another.
+
 ## Caveats
 
 - **The labels are LLM grades of text relevance, not hirer outcomes.** One model at temperature

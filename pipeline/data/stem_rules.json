@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "Ordered suffix-stripping rules for simple_stem() in common/corpus.py.",
+    "First match wins, so the list is NOT alphabetical and must stay in this order:",
+    "longer/more-specific suffixes come before shorter ones ('ations' before",
+    "'s', 'ies' before 'es'), otherwise 'regulations' would only lose its 's'.",
+    "",
+    "Lives here rather than in .env because it is a rule table, not a setting:",
+    "the same on every machine, and unreadable as a single env-var line. Same",
+    "class of file as synonyms.json beside it. Edit only if you intend to change",
+    "how BM25 tokenises -- every Stage-1 number moves if you do."
+  ],
+  "min_stem_length": 4,
+  "rules": [
+    ["ations", ""],
+    ["ation", ""],
+    ["atory", "ate"],
+    ["edly", ""],
+    ["ing", ""],
+    ["ed", ""],
+    ["ies", "y"],
+    ["ives", "ive"],
+    ["ly", ""],
+    ["es", ""],
+    ["s", ""]
+  ]
+}

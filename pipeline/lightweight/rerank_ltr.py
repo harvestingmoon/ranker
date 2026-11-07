@@ -31,6 +31,10 @@ from pipeline.common.evaluate import evaluate_all_hirers
 from pipeline.features.tag_features import TAG_FEATURES
 from pipeline.common.paths import PIPELINE
 
+from pipeline.common.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 BASE = PIPELINE
 DATA_DIR = BASE / "data"
 FEAT_DIR = BASE / "features_data"
@@ -160,7 +164,7 @@ def report(name, ranked_by_query, gt, rrf_full):
     line, and return the dict. Lists are padded from the RRF ranking first, so
     every system is scored over the same full candidate set."""
     m = evaluate_all_hirers(full_lists(ranked_by_query, rrf_full), gt, ks=(5, 10))
-    print(f"  {name:22s} P@5={m['precision@5']:.3f} R@5={m['recall@5']:.3f} NDCG@5={m['ndcg@5']:.3f} "
+    logger.info(f"  {name:22s} P@5={m['precision@5']:.3f} R@5={m['recall@5']:.3f} NDCG@5={m['ndcg@5']:.3f} "
           f"P@10={m['precision@10']:.3f} R@10={m['recall@10']:.3f} NDCG@10={m['ndcg@10']:.4f} MRR={m['mrr']:.3f}")
     return m
 
@@ -174,7 +178,7 @@ def train_oof(rows, features, folds, seed, gt, rrf_full):
     oof, importances, fold_metrics = {}, [], []
 
     for fold, (tr_idx, te_idx) in enumerate(GroupKFold(n_splits=folds).split(queries, groups=queries), 1):
-        tr_q = sorted(queries[i] for i in tr_idx)
+        tr_q = sorted(queries[i] for i in tr_idx) # try to pack it to see if there are better methods {} 
         te_q = sorted(queries[i] for i in te_idx)
 
         tr_rows = [r for q in tr_q for r in by_query[q] if r["label"] is not None]
@@ -195,12 +199,12 @@ def train_oof(rows, features, folds, seed, gt, rrf_full):
             fold_rank.setdefault(r["hire_id"], []).append((r["provider_id"], float(p)))
         ranked = {q: [pid for pid, _ in sorted(v, key=lambda x: -x[1])] for q, v in fold_rank.items()}
         fold_metrics.append(evaluate_all_hirers(full_lists(ranked, rrf_full), gt, ks=(10,))["ndcg@10"])
-        print(f"  fold {fold}: {len(tr_q)} train / {len(te_q)} held-out gigs  NDCG@10={fold_metrics[-1]:.4f}")
+        logger.info(f"  fold {fold}: {len(tr_q)} train / {len(te_q)} held-out gigs  NDCG@10={fold_metrics[-1]:.4f}")
 
-    print("\n  mean feature importance:")
+    logger.info("\n  mean feature importance:")
     for f, v in sorted(zip(features, np.mean(importances, axis=0)), key=lambda x: -x[1]):
-        print(f"    {f:18s} {v:.4f}")
-    print(f"  fold NDCG@10: mean={np.mean(fold_metrics):.4f} std={np.std(fold_metrics):.4f}")
+        logger.info(f"    {f:18s} {v:.4f}")
+    logger.info(f"  fold NDCG@10: mean={np.mean(fold_metrics):.4f} std={np.std(fold_metrics):.4f}")
     return oof
 
 
@@ -237,15 +241,15 @@ def main():
     by_query = defaultdict(list)
     for r in rows:
         by_query[r["hire_id"]].append(r)
-    print(f"loaded {len(rows)} candidate rows / {len(by_query)} gigs ({n_labelled} labelled)")
-    print(f"features ({len(features)}): {features}\n")
+    logger.info(f"loaded {len(rows)} candidate rows / {len(by_query)} gigs ({n_labelled} labelled)")
+    logger.info(f"features ({len(features)}): {features}\n")
 
-    print("baseline (same candidate pool):")
+    logger.info("baseline (same candidate pool):")
     base_rrf = {q: [r["provider_id"] for r in sorted(rs, key=lambda r: r["rrf_rank"])]
                 for q, rs in by_query.items()}
     m_rrf = report("RRF", base_rrf, gt, rrf_full)
 
-    print("\nLambdaMART (GroupKFold by gig, out-of-fold):")
+    logger.info("\nLambdaMART (GroupKFold by gig, out-of-fold):")
     oof = train_oof(rows, features, args.folds, args.seed, gt, rrf_full)
     ltr_rank = {q: [r["provider_id"] for r in sorted(rs, key=lambda r: -oof[(q, r["provider_id"])])]
                 for q, rs in by_query.items()}
@@ -253,7 +257,7 @@ def main():
 
     oof_path = RESULTS_DIR / f"{args.tag}.json"
     oof_path.write_text(json.dumps({str(q): [int(pid) for pid in rs] for q, rs in ltr_rank.items()}, indent=2))
-    print(f"wrote out-of-fold ranked lists to {oof_path}")
+    logger.info(f"wrote out-of-fold ranked lists to {oof_path}")
 
     # Serving model: the same configuration fit on every labelled gig.
     all_rows = sorted([r for r in rows if r["label"] is not None], key=lambda r: r["hire_id"])
@@ -264,12 +268,12 @@ def main():
     final.fit(X, train_labels(all_rows), group=groups)
     model_path = MODELS_DIR / f"{args.tag}_xgb.json"
     final.save_model(str(model_path))
-    print(f"saved full-data model to {model_path}")
+    logger.info(f"saved full-data model to {model_path}")
 
-    print("\n--- summary ---")
-    print(f"  RRF baseline        NDCG@10={m_rrf['ndcg@10']:.4f}  P@5={m_rrf['precision@5']:.3f}  MRR={m_rrf['mrr']:.3f}")
-    print(f"  + LambdaMART (OOF)  NDCG@10={m_ltr['ndcg@10']:.4f}  P@5={m_ltr['precision@5']:.3f}  MRR={m_ltr['mrr']:.3f}")
-    print(f"\n{len(by_query)} gigs -- treat any NDCG@10 delta under ~0.007 as noise.")
+    logger.info("\n--- summary ---")
+    logger.info(f"  RRF baseline        NDCG@10={m_rrf['ndcg@10']:.4f}  P@5={m_rrf['precision@5']:.3f}  MRR={m_rrf['mrr']:.3f}")
+    logger.info(f"  + LambdaMART (OOF)  NDCG@10={m_ltr['ndcg@10']:.4f}  P@5={m_ltr['precision@5']:.3f}  MRR={m_ltr['mrr']:.3f}")
+    logger.info(f"\n{len(by_query)} gigs -- treat any NDCG@10 delta under ~0.007 as noise.")
 
 
 if __name__ == "__main__":

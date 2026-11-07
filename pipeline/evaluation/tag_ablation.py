@@ -38,6 +38,10 @@ from pipeline.data_prep.merge_topup_grades import load_topup
 from pipeline.features.tag_features import TAG_FEATURES
 from pipeline.common.paths import PIPELINE
 
+from pipeline.common.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 BASE = PIPELINE
 METRICS = ["ndcg@10", "ndcg@5", "p@5", "p@10", "r@10", "mrr", "judged@10"]
 
@@ -150,20 +154,20 @@ def main():
                 lists = oof_lists(rows, by_query, queries, feats, 0, use_label)
                 (out_dir / f"{tag}.json").write_text(json.dumps({str(q): [int(p) for p in v] for q, v in lists.items()}, indent=2))
 
-        print(f"\n=== {regime} -- evaluated on all {sum(map(len, judged.values()))} graded pairs, "
+        logger.info(f"\n=== {regime} -- evaluated on all {sum(map(len, judged.values()))} graded pairs, "
               f"mean over splits {seeds} ===")
-        print(f"{'system':38s}" + "".join(f"{c:>10s}" for c in METRICS))
-        print(f"{'RRF k=60 (no training)':38s}" + "".join(f"{np.nanmean(m_rrf[c]):10.4f}" for c in METRICS))
+        logger.info(f"{'system':38s}" + "".join(f"{c:>10s}" for c in METRICS))
+        logger.info(f"{'RRF k=60 (no training)':38s}" + "".join(f"{np.nanmean(m_rrf[c]):10.4f}" for c in METRICS))
         for name in systems:
-            print(f"{name:38s}" + "".join(
+            logger.info(f"{name:38s}" + "".join(
                 f"{np.mean([np.nanmean(res[name][s][c]) for s in seeds]):10.4f}" for c in METRICS))
         a, b = list(systems)
-        print(f"\n  tags vs shipped, paired bootstrap on split {seeds[0]} (delta on every split):")
+        logger.info(f"\n  tags vs shipped, paired bootstrap on split {seeds[0]} (delta on every split):")
         for c in ["ndcg@10", "ndcg@5", "p@5", "p@10", "r@10", "mrr"]:
             d, lo, hi = boot(res[b][seeds[0]][c], res[a][seeds[0]][c])
             verdict = "better" if lo > 0 else "worse" if hi < 0 else "crosses 0"
             per = " ".join(f"{np.nanmean(res[b][s][c] - res[a][s][c]):+.4f}" for s in seeds)
-            print(f"    {c:8s} {d:+.4f} [{lo:+.4f}, {hi:+.4f}]  {verdict:9s}  per split: {per}")
+            logger.info(f"    {c:8s} {d:+.4f} [{lo:+.4f}, {hi:+.4f}]  {verdict:9s}  per split: {per}")
 
 
 if __name__ == "__main__":

@@ -20,6 +20,10 @@ from pathlib import Path
 
 from pipeline.common.paths import PIPELINE
 
+from pipeline.common.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 V5 = PIPELINE / "data" / "data_set_v5"
 OUT = PIPELINE / "data" / "data_set_v5_tax"
 
@@ -86,15 +90,15 @@ def main():
 
     ch, sh, sth, skh = axis_counts(v5_h)
     cp, sp, stp, skp = axis_counts(v5_p)
-    print(f"enriched -> {OUT}/")
-    print(f"  gigs with tags      : {n_h}/{len(v5_h)}")
-    print(f"  providers with tags : {n_p}/{len(v5_p)}")
-    print()
-    print("  distinct vocabulary on each axis (gig / provider):")
-    print(f"    categories      {ch:>5} / {cp}")
-    print(f"    specialisations {sh:>5} / {sp}")
-    print(f"    search_tags     {sth:>5} / {stp}")
-    print(f"    skills          {skh:>5} / {skp}")
+    logger.info(f"enriched -> {OUT}/")
+    logger.info(f"  gigs with tags      : {n_h}/{len(v5_h)}")
+    logger.info(f"  providers with tags : {n_p}/{len(v5_p)}")
+    logger.info()
+    logger.info("  distinct vocabulary on each axis (gig / provider):")
+    logger.info(f"    categories      {ch:>5} / {cp}")
+    logger.info(f"    specialisations {sh:>5} / {sp}")
+    logger.info(f"    search_tags     {sth:>5} / {stp}")
+    logger.info(f"    skills          {skh:>5} / {skp}")
 
 
 if __name__ == "__main__":

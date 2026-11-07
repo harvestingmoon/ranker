@@ -8,7 +8,12 @@ built from the same underlying fields -- what differs between
 light stemming and title-field weighting, refinements that only make sense
 for a token-overlap scorer, not an embedding model.
 """
+import json
 import re
+from pathlib import Path
+
+from pipeline.common import settings
+from pipeline.common.paths import PIPELINE
 
 # ---------------------------------------------------------------------------
 # Plain text builders (used by the dense embedding model, and as the base
@@ -48,25 +53,39 @@ def hirer_text(h: dict) -> str:
 # Tokenization + stemming (BM25 only)
 # ---------------------------------------------------------------------------
 
-STOPWORDS = {
-    "a", "an", "the", "of", "to", "in", "on", "for", "and", "or", "is",
-    "are", "was", "were", "our", "we", "it", "its", "this",
-    "that", "with", "at", "as", "be", "by", "has", "have", "had",
-    "not", "just", "so", "than", "then", "need", "needs",
-}
+# Stopwords and the stemming rules are REFERENCE DATA, not settings: they define
+# what tokenisation means, they are identical on every machine, and .env is
+# gitignored -- a fresh clone must still have them. They live in pipeline/data/
+# beside synonyms.json. Loaded once at import and cached in module state, so this
+# is a single read per process rather than a parse per token.
+_STOPWORDS_PATH = PIPELINE / "data" / "stopwords.txt"
+_STEM_RULES_PATH = PIPELINE / "data" / "stem_rules.json"
 
-# A small, deliberately conservative suffix-stripping stemmer -- not a full
-# Porter/Snowball implementation, but our vocabulary is bounded and
-# domain-specific (consulting/compliance/finance terms), so this is enough
-# to fold "regulate/regulatory/regulation" or "provision/provisioning" onto
-# a shared root without a new dependency or a corpora download.
-_SUFFIX_RULES = [
-    ("ations", ""), ("ation", ""), ("atory", "ate"),
-    ("edly", ""), ("ing", ""), ("ed", ""),
-    ("ies", "y"), ("ives", "ive"), ("ly", ""),
-    ("es", ""), ("s", ""),
-]
-_MIN_STEM_LEN = 4
+
+def _load_stopwords(path: Path = _STOPWORDS_PATH) -> set[str]:
+    """One word per line; blank lines and # comments ignored."""
+    if not path.exists():
+        raise FileNotFoundError(f"stopword list missing: {path}")
+    words = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        word = line.strip().lower()
+        if word and not word.startswith("#"):
+            words.add(word)
+    return words
+
+
+def _load_stem_rules(path: Path = _STEM_RULES_PATH) -> tuple[list[tuple[str, str]], int]:
+    """(rules, min_stem_length). Rules are ORDERED: first match wins, so a
+    specific suffix must precede a general one ('ations' before 's')."""
+    if not path.exists():
+        raise FileNotFoundError(f"stem rule table missing: {path}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    rules = [(str(suffix), str(replacement)) for suffix, replacement in data["rules"]]
+    return rules, int(data.get("min_stem_length", settings.STEM_MIN_LENGTH))
+
+
+STOPWORDS = _load_stopwords()
+_SUFFIX_RULES, _MIN_STEM_LEN = _load_stem_rules()
 
 
 def simple_stem(word: str) -> str:

@@ -25,6 +25,10 @@ from pipeline.recall.retrieval_dense import (
 from pipeline.recall.retrieval_rrf import rrf_fuse
 from pipeline.common.paths import PIPELINE
 
+from pipeline.common.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 BASE = PIPELINE
 DATA_DIR = BASE / "data"
 RESULTS_DIR = BASE / "results"
@@ -66,11 +70,11 @@ def run_dense_model(label, providers, hirers, provider_ids, model_name, dims, qu
     """Embed the corpus once, then score every dimension in `dims` off that single
     pass -- Matryoshka truncation is cheap, re-embedding is not. Returns
     {dim: ranked lists}, keyed by dimension (None = full width)."""
-    print(f"Embedding with {label} ({model_name})...")
+    logger.info(f"Embedding with {label} ({model_name})...")
     t0 = time.time()
     doc_raw = encode_docs([provider_text(p) for p in providers], model_name=model_name)
     query_raw = encode_queries([hirer_text(h) for h in hirers], model_name=model_name, query_prefix=query_prefix)
-    print(f"  embedding done in {time.time() - t0:.1f}s")
+    logger.info(f"  embedding done in {time.time() - t0:.1f}s")
 
     scored_by_dim = {}
     for dim in dims:
@@ -84,7 +88,7 @@ def run_dense_model(label, providers, hirers, provider_ids, model_name, dims, qu
         scored_by_dim[dim_label] = scored_by_hirer
         out_name = f"dense_{label}_{dim_label}.json" if label != "base" else f"dense_{dim_label}.json"
         (RESULTS_DIR / out_name).write_text(json.dumps(results, indent=2))
-        print(f"  {out_name} written")
+        logger.info(f"  {out_name} written")
     return scored_by_dim
 
 
@@ -104,7 +108,7 @@ def main():
     provider_ids = [p["provider_id"] for p in providers]
 
     # ---------------- BM25: baseline vs refined ----------------
-    print("Running BM25 (baseline)...")
+    logger.info("Running BM25 (baseline)...")
     t0 = time.time()
     bm25_baseline = BM25Retriever(providers, refined=False)
     bm25_baseline_results = {}
@@ -112,9 +116,9 @@ def main():
         scored = bm25_baseline.rank(hirer_text(h))
         bm25_baseline_results[str(h["hire_id"])] = ranked_ids_only(scored)
     (RESULTS_DIR / "bm25_baseline.json").write_text(json.dumps(bm25_baseline_results, indent=2))
-    print(f"  done in {time.time() - t0:.1f}s")
+    logger.info(f"  done in {time.time() - t0:.1f}s")
 
-    print("Running BM25 (refined: stemming + field weighting + synonyms)...")
+    logger.info("Running BM25 (refined: stemming + field weighting + synonyms)...")
     t0 = time.time()
     bm25_refined = BM25Retriever(providers, refined=True)
     bm25_refined_results = {}
@@ -125,7 +129,7 @@ def main():
         bm25_refined_results[str(h["hire_id"])] = ranked_ids_only(scored)
     (RESULTS_DIR / "bm25_refined.json").write_text(json.dumps(bm25_refined_results, indent=2))
     (RESULTS_DIR / "bm25.json").write_text(json.dumps(bm25_refined_results, indent=2))  # keep the plain name pointed at the better variant
-    print(f"  done in {time.time() - t0:.1f}s")
+    logger.info(f"  done in {time.time() - t0:.1f}s")
 
     # ---------------- Dense: base model, Matryoshka truncation sweep ----------------
     base_scored_by_dim = run_dense_model(
@@ -134,7 +138,7 @@ def main():
     full_dense_scored = base_scored_by_dim["full"]
 
     # ---------------- Dense: instruction-prefix A/B (base model, full dim) ----------------
-    print("Embedding with domain-tuned instruction prefix (base model, full dim)...")
+    logger.info("Embedding with domain-tuned instruction prefix (base model, full dim)...")
     t0 = time.time()
     doc_raw = encode_docs([provider_text(p) for p in providers], model_name=BASE_MODEL_NAME)
     query_raw_domain = encode_queries(
@@ -145,7 +149,7 @@ def main():
         scored = rank_from_raw(doc_raw, query_raw_domain[i], provider_ids, truncate_dim=None)
         domain_prefix_results[str(h["hire_id"])] = ranked_ids_only(scored)
     (RESULTS_DIR / "dense_domainprefix_full.json").write_text(json.dumps(domain_prefix_results, indent=2))
-    print(f"  done in {time.time() - t0:.1f}s")
+    logger.info(f"  done in {time.time() - t0:.1f}s")
 
     # ---------------- Dense: fine-tuned model (full + 256-dim default) ----------------
     finetuned_path = Path(FINETUNED_MODEL_PATH)
@@ -154,21 +158,21 @@ def main():
             "finetuned", providers, hirers, provider_ids, FINETUNED_MODEL_PATH, [None, 256],
         )
     else:
-        print(f"Skipping fine-tuned dense run -- model not found at {FINETUNED_MODEL_PATH} "
+        logger.info(f"Skipping fine-tuned dense run -- model not found at {FINETUNED_MODEL_PATH} "
               f"(run pipeline/finetune_embeddings.py first)")
 
     # ---------------- RRF: k sweep (refined BM25 + base full-dim dense) ----------------
-    print("Running RRF k sweep...")
+    logger.info("Running RRF k sweep...")
     for k in RRF_KS:
         rrf_results = {}
         for h in hirers:
             fused = rrf_fuse(bm25_refined_scored_cache[h["hire_id"]], full_dense_scored[h["hire_id"]], k=k)
             rrf_results[str(h["hire_id"])] = ranked_ids_only(fused)
         (RESULTS_DIR / f"rrf_k{k}.json").write_text(json.dumps(rrf_results, indent=2))
-        print(f"  rrf[k={k}] written")
+        logger.info(f"  rrf[k={k}] written")
 
     # ---------------- RRF: weighted sweep (fixed k=60) ----------------
-    print("Running weighted RRF sweep...")
+    logger.info("Running weighted RRF sweep...")
     for sw, dw in RRF_WEIGHT_COMBOS:
         rrf_results = {}
         for h in hirers:
@@ -178,9 +182,9 @@ def main():
             )
             rrf_results[str(h["hire_id"])] = ranked_ids_only(fused)
         (RESULTS_DIR / f"rrf_w_sw{sw}_dw{dw}.json").write_text(json.dumps(rrf_results, indent=2))
-        print(f"  rrf[sparse_weight={sw}, dense_weight={dw}] written")
+        logger.info(f"  rrf[sparse_weight={sw}, dense_weight={dw}] written")
 
-    print(f"\nAll results written to {RESULTS_DIR.relative_to(BASE.parent)}/")
+    logger.info(f"\nAll results written to {RESULTS_DIR.relative_to(BASE.parent)}/")
 
 
 if __name__ == "__main__":

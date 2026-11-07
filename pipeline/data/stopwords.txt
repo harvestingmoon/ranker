@@ -1,0 +1,48 @@
+# Stopwords removed before BM25 tokenisation.
+#
+# Lives here rather than in .env because it is algorithm definition, not
+# environment configuration: it is identical on every machine, it is long enough
+# that a single env-var line would be unreadable and shell-fragile, and .env is
+# gitignored -- a fresh clone must still have it. Same class of file as
+# synonyms.json beside it.
+#
+# One word per line. Blank lines and lines starting with # are ignored.
+#
+# Deliberately short and generic. Domain words ("consulting", "engagement",
+# "provider") are NOT listed: they carry matching signal in this corpus and
+# dropping them measurably hurts recall.
+a
+an
+the
+of
+to
+in
+on
+for
+and
+or
+is
+are
+was
+were
+our
+we
+it
+its
+this
+that
+with
+at
+as
+be
+by
+has
+have
+had
+not
+just
+so
+than
+then
+need
+needs

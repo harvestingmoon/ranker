@@ -20,6 +20,10 @@ import numpy as np
 
 from pipeline.lightweight import rerank_ltr as R
 
+from pipeline.common.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 GRAPH_FEATURES = ["skill_sib_cov", "skill_cat_cov", "graph_dist_mean", "graph_dist_min",
                   "spec_cat_cov", "skill_jaccard"]
 INTERACTION_FEATURES = ["tl_x_rank", "speccov_x_tl", "skillcov_x_tl"]
@@ -165,7 +169,7 @@ def merge_ce_scores(rows, ce_dir: Path, ce_tags):
                 v = 0.0; miss += 1
             r[col] = v
         cols.append(col)
-        print(f"{col} <- {tag} ({miss} missing -> 0.0)")
+        logger.info(f"{col} <- {tag} ({miss} missing -> 0.0)")
     return cols
 
 

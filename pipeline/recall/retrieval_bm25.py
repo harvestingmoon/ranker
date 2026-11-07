@@ -20,6 +20,7 @@ from rank_bm25 import BM25Okapi
 from pipeline.common.corpus import (
     provider_text, tokenize, provider_bm25_tokens, hirer_bm25_tokens, simple_stem,
 )
+from pipeline.common import settings
 from pipeline.common.paths import PIPELINE
 
 SYNONYMS_PATH = PIPELINE / "data" / "synonyms.json"
@@ -38,8 +39,8 @@ def _load_stemmed_synonyms() -> dict[str, list[str]]:
 
 
 class BM25Retriever:
-    def __init__(self, providers: list[dict], k1: float = 1.5, b: float = 0.75,
-                 refined: bool = True, title_weight: int = 3):
+    def __init__(self, providers: list[dict], k1: float = settings.BM25_K1, b: float = settings.BM25_B,
+                 refined: bool = True, title_weight: int = settings.BM25_TITLE_WEIGHT):
         """Index all providers once. `refined=False` gives the plain baseline
         (no stemming, no title weighting, no synonyms); `refined=True` is the
         shipped configuration. k1/b are standard Okapi BM25 term-frequency and
